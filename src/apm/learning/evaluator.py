@@ -16,6 +16,7 @@ from sqlalchemy import select
 from apm.config import get_settings
 from apm.db import session_scope
 from apm.db.models import Counterfactual, Trade
+from apm.db.models import Decision as DecisionRow
 from apm.domain import Side
 from apm.observability import get_logger
 from apm.webull.adapter import WebullAdapter
@@ -96,3 +97,94 @@ class LearningService:
             "profit_factor": (gross_win / gross_loss) if gross_loss else None,
             "total_net_pnl": sum(pnls),
         }
+
+    async def build_scorecard(self) -> dict:
+        """A compact, deterministic 'self-track-record' fed into the decision context so the
+        AI learns from its own history each cycle (no extra LLM call). High-signal, low-token:
+        overall metrics + confidence calibration + performance by decision type + what the AI
+        rejected/waited on. Everything here is computed from data already stored."""
+        settings = get_settings()
+        pid = settings.portfolio_id
+        async with session_scope() as s:
+            trades = (
+                await s.scalars(
+                    select(Trade).where(Trade.portfolio_id == pid, Trade.status == "CLOSED")
+                )
+            ).all()
+            # Closed trades joined to the decision that spawned them (for type breakdown).
+            type_rows = (
+                await s.execute(
+                    select(DecisionRow.decision_type, Trade.net_pnl)
+                    .join(Trade, Trade.decision_id == DecisionRow.id)
+                    .where(Trade.portfolio_id == pid, Trade.status == "CLOSED")
+                )
+            ).all()
+            cfs = (
+                await s.scalars(
+                    select(Counterfactual).where(
+                        Counterfactual.evaluated_at.is_not(None),
+                        Counterfactual.counterfactual_return.is_not(None),
+                    )
+                )
+            ).all()
+
+        card: dict = {"overall": await self.compute_metrics()}
+
+        # 1. Confidence calibration — does a high stated confidence actually win more?
+        card["calibration"] = _calibration(
+            [(t.claude_confidence, t.net_pnl) for t in trades]
+        )
+
+        # 2. Performance by decision type (BUY/SELL/CLOSE...).
+        card["by_decision_type"] = _by_group(
+            [(dtype, pnl) for dtype, pnl in type_rows]
+        )
+
+        # 3. Opportunities NOT taken (rejected candidates + WAITs) — is the AI leaving
+        #    winners on the table (too conservative) or correctly avoiding losers?
+        not_taken = [c.counterfactual_return for c in cfs if not c.chosen]
+        if not_taken:
+            would_win = [r for r in not_taken if r > 0.02]  # >2% move if it had acted
+            card["opportunities_not_taken"] = {
+                "sample": len(not_taken),
+                "avg_return_if_taken": round(sum(not_taken) / len(not_taken), 4),
+                "would_have_won_pct": round(len(would_win) / len(not_taken), 3),
+            }
+        return card
+
+
+def _calibration(pairs: list[tuple[float | None, float | None]]) -> list[dict]:
+    """Win-rate per stated-confidence bucket. Signal: is the AI's confidence meaningful?"""
+    buckets = {"low<0.6": (0.0, 0.6), "mid0.6-0.8": (0.6, 0.8), "high>=0.8": (0.8, 1.01)}
+    out = []
+    for label, (lo, hi) in buckets.items():
+        sample = [
+            pnl
+            for conf, pnl in pairs
+            if conf is not None and pnl is not None and lo <= conf < hi
+        ]
+        if sample:
+            wins = len([p for p in sample if p > 0])
+            out.append(
+                {"confidence": label, "n": len(sample), "win_rate": round(wins / len(sample), 3)}
+            )
+    return out
+
+
+def _by_group(pairs: list[tuple[str, float | None]]) -> list[dict]:
+    groups: dict[str, list[float]] = {}
+    for key, pnl in pairs:
+        if pnl is not None:
+            groups.setdefault(key, []).append(pnl)
+    out = []
+    for key, pnls in groups.items():
+        wins = len([p for p in pnls if p > 0])
+        out.append(
+            {
+                "type": key,
+                "n": len(pnls),
+                "win_rate": round(wins / len(pnls), 3),
+                "expectancy": round(sum(pnls) / len(pnls), 2),
+            }
+        )
+    return out

@@ -17,7 +17,8 @@ def test_can_place_real_orders_requires_flag_and_real_mode():
 
 def test_defaults_are_safe():
     # Safety-first defaults: no trading, mock execution, mock provider (spec §36, §67).
-    s = Settings()
+    # _env_file=None so a developer's local .env (real creds) can't affect the assertion.
+    s = Settings(_env_file=None)
     assert s.trading_enabled is False
     assert s.execution_mode is ExecutionMode.MOCK
     assert s.claude_provider is ClaudeProviderName.MOCK

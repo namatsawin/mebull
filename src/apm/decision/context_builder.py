@@ -8,6 +8,7 @@ from apm.config import get_settings
 from apm.db import session_scope
 from apm.db.models import Decision as DecisionRow
 from apm.decision.context import ContextQuote, DecisionContext
+from apm.learning.evaluator import LearningService
 from apm.memory.service import MemoryService
 from apm.observability import get_logger
 from apm.portfolio.state import PortfolioState
@@ -23,10 +24,12 @@ class ContextBuilder:
         memory: MemoryService,
         *,
         discovery=None,
+        learning: LearningService | None = None,
     ) -> None:
         self._adapter = adapter
         self._memory = memory
         self._discovery = discovery
+        self._learning = learning or LearningService(adapter)
 
     async def build(
         self, trigger: str, state: PortfolioState, *, extra_symbols: list[str] | None = None
@@ -62,6 +65,7 @@ class ContextBuilder:
             recent_decisions=await self._recent_decisions(state.portfolio_id),
             relevant_memories=await self._memory.recall(limit=10),
             known_failures=await self._memory.recall(category="FAILURE", limit=10),
+            scorecard=await self._learning.build_scorecard(),
         )
 
     async def _recent_decisions(self, portfolio_id: str, limit: int = 10) -> list[dict]:

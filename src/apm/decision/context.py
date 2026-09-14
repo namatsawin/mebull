@@ -32,6 +32,9 @@ class DecisionContext(BaseModel):
     recent_decisions: list[dict] = Field(default_factory=list)
     relevant_memories: list[dict] = Field(default_factory=list)
     known_failures: list[dict] = Field(default_factory=list)
+    # Compact self-track-record (win-rate, calibration, what was rejected/waited on) so the
+    # AI learns from its own history each cycle. Deterministic — no extra LLM call.
+    scorecard: dict = Field(default_factory=dict)
 
     def candidate_prices(self) -> dict[str, float]:
         return {q.symbol: q.price for q in self.quotes}

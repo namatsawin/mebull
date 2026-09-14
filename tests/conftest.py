@@ -20,6 +20,22 @@ _TABLES = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_env(monkeypatch):
+    """Force a clean, safe MOCK test profile so a developer's real `.env` (SANDBOX/REAL creds,
+    Anthropic key) can never leak into the test run — no real broker/LLM is ever touched."""
+    monkeypatch.setenv("APM_EXECUTION_MODE", "MOCK")
+    monkeypatch.setenv("APM_CLAUDE_PROVIDER", "mock")
+    monkeypatch.setenv("APM_TRADING_ENABLED", "false")
+    monkeypatch.setenv("APM_MARKET_HOURS_ONLY", "false")
+
+    from apm.config import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest_asyncio.fixture
 async def clean_db():
     # pytest-asyncio runs each test in a fresh event loop; the cached async engine's
