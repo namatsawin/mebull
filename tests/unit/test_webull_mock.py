@@ -64,6 +64,28 @@ async def test_cancel_open_order():
     assert cancelled.status.value == "CANCELLED"
 
 
+async def test_option_chain_and_order():
+    from apm.domain import InstrumentType, OptionRight
+    a = MockWebullAdapter(starting_cash=100_000)
+    a.set_quote("SPY", 760.0)
+    chain = await a.get_option_chain("SPY", right=OptionRight.CALL)
+    assert chain and all(c.right is OptionRight.CALL for c in chain)
+    assert all(c.underlying == "SPY" and c.expiry for c in chain)
+    assert chain[0].contract_cost is not None  # priced
+
+    c = chain[0]
+    order = await a.place_option_order(
+        OrderRequest(
+            client_order_id="opt-1", symbol="SPY",
+            instrument_type=InstrumentType.CALL_OPTION, side=Side.BUY, quantity=1,
+            order_type=OrderType.LIMIT, limit_price=c.mid,
+            option_strike=c.strike, option_expiry=c.expiry,
+        )
+    )
+    assert order.status.value == "FILLED"
+    assert order.avg_fill_price == c.mid
+
+
 async def test_historical_bars_are_deterministic():
     a = MockWebullAdapter()
     b1 = await a.get_historical_bars("NVDA", count=50)

@@ -66,6 +66,11 @@ class Decision(BaseModel):
     action: Side | None = None
     quantity: float | None = None
 
+    # Options (single-leg): set instrument_type=CALL_OPTION/PUT_OPTION, symbol=underlying,
+    # quantity=number of contracts, plus the strike and expiry below.
+    option_strike: float | None = None
+    option_expiry: str | None = None  # YYYY-MM-DD
+
     thesis: str | None = None
     entry_plan: EntryPlan | None = None
     exit_plan: ExitPlan | None = None
@@ -106,4 +111,10 @@ class Decision(BaseModel):
                     )
                 if self.quantity is None or self.quantity <= 0:
                     raise ValueError(f"{self.decision_type} requires quantity > 0")
+            # Option orders need a strike + expiry to identify the contract.
+            if self.instrument_type in (InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION):
+                if self.option_strike is None or not self.option_expiry:
+                    raise ValueError(
+                        f"{self.instrument_type.value} requires option_strike and option_expiry"
+                    )
         return self

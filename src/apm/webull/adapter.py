@@ -16,6 +16,8 @@ from apm.domain import (
     AccountBalance,
     Bar,
     BrokerOrder,
+    OptionContract,
+    OptionRight,
     OrderPreview,
     OrderRequest,
     Position,
@@ -53,3 +55,16 @@ class WebullAdapter(Protocol):
     async def place_order(self, request: OrderRequest) -> BrokerOrder: ...
 
     async def cancel_order(self, client_order_id: str) -> BrokerOrder: ...
+
+    # --- options (single-leg) ------------------------------------------------
+    async def get_option_chain(
+        self,
+        underlying: str,
+        *,
+        expiry: str | None = None,
+        right: OptionRight | None = None,
+    ) -> list[OptionContract]: ...
+
+    async def preview_option_order(self, request: OrderRequest) -> OrderPreview: ...
+
+    async def place_option_order(self, request: OrderRequest) -> BrokerOrder: ...

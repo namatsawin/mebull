@@ -119,6 +119,37 @@ class Bar(BaseModel):
     volume: float
 
 
+class OptionRight(StrEnum):
+    CALL = "CALL"
+    PUT = "PUT"
+
+
+class OptionContract(BaseModel):
+    """One option contract (single leg). ``expiry`` is YYYY-MM-DD."""
+
+    underlying: str
+    right: OptionRight
+    strike: float
+    expiry: str
+    symbol: str | None = None        # broker/OCC option symbol
+    instrument_id: str | None = None
+    last: float | None = None
+    bid: float | None = None
+    ask: float | None = None
+
+    @property
+    def mid(self) -> float | None:
+        if self.bid is not None and self.ask is not None:
+            return round((self.bid + self.ask) / 2, 4)
+        return self.last
+
+    @property
+    def contract_cost(self) -> float | None:
+        """Cash to buy one contract (price x100 multiplier)."""
+        px = self.mid
+        return round(px * 100, 2) if px is not None else None
+
+
 # --- Orders -----------------------------------------------------------------
 class OrderRequest(BaseModel):
     """A request to place one order leg. Broker-agnostic.
@@ -139,6 +170,16 @@ class OrderRequest(BaseModel):
     time_in_force: TimeInForce = TimeInForce.DAY
     decision_id: str | None = None
     extended_hours: bool = False
+    # Option legs (single-leg). Set when instrument_type is CALL_OPTION/PUT_OPTION;
+    # ``symbol`` then holds the underlying. Options are LIMIT-only, BUY/SELL only (spec/Webull).
+    option_strike: float | None = None
+    option_expiry: str | None = None  # YYYY-MM-DD
+    option_contract_symbol: str | None = None
+    option_strategy: str = "SINGLE"
+
+    @property
+    def is_option(self) -> bool:
+        return self.instrument_type in (InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION)
 
 
 class OrderPreview(BaseModel):

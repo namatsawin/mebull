@@ -51,6 +51,23 @@ def test_coerces_comma_separated_string_lists():
     assert d.alternatives_considered == ["BUY IWM", "WAIT"]
 
 
+def test_option_requires_strike_and_expiry():
+    from apm.domain import InstrumentType
+    with pytest.raises(ValidationError):
+        Decision(
+            decision_type=DecisionType.BUY, symbol="SPY", quantity=1,
+            instrument_type=InstrumentType.CALL_OPTION,
+            confidence=0.7, reasoning_summary="call",
+        )
+    # valid with strike + expiry
+    d = Decision(
+        decision_type=DecisionType.BUY, symbol="SPY", quantity=1,
+        instrument_type=InstrumentType.CALL_OPTION, option_strike=760.0,
+        option_expiry="2026-10-16", confidence=0.7, reasoning_summary="call",
+    )
+    assert d.option_strike == 760.0 and d.option_expiry == "2026-10-16"
+
+
 def test_places_order_flag():
     assert DecisionType.BUY.places_order
     assert DecisionType.CLOSE.places_order

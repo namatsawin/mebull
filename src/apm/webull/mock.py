@@ -18,6 +18,8 @@ from apm.domain import (
     AccountBalance,
     Bar,
     BrokerOrder,
+    OptionContract,
+    OptionRight,
     OrderPreview,
     OrderRequest,
     OrderStatus,
@@ -176,6 +178,67 @@ class MockWebullAdapter:
         if order.status.is_open:
             order.status = OrderStatus.CANCELLED
             order.updated_at = self._now
+        return order
+
+    # --- options (single-leg, deterministic) ---------------------------------
+    def _default_expiry(self) -> str:
+        return (self._now + dt.timedelta(days=30)).date().isoformat()
+
+    def _option_price(self, underlying_px: float, strike: float, right: OptionRight) -> float:
+        intrinsic = max(0.0, underlying_px - strike) if right == OptionRight.CALL else max(
+            0.0, strike - underlying_px
+        )
+        time_value = round(underlying_px * 0.02, 2)  # simple, deterministic
+        return round(intrinsic + time_value, 2)
+
+    async def get_option_chain(
+        self, underlying: str, *, expiry=None, right=None
+    ) -> list[OptionContract]:
+        px = self._price(underlying)
+        expiry = expiry or self._default_expiry()
+        rights = [right] if right else [OptionRight.CALL, OptionRight.PUT]
+        step = max(1.0, round(px * 0.05, 0))
+        base = round(px / step) * step
+        out: list[OptionContract] = []
+        for r in rights:
+            for k in range(-2, 3):  # 5 strikes around ATM
+                strike = round(base + k * step, 2)
+                if strike <= 0:
+                    continue
+                p = self._option_price(px, strike, r)
+                out.append(
+                    OptionContract(
+                        underlying=underlying.upper(), right=r, strike=strike, expiry=expiry,
+                        symbol=f"{underlying.upper()} {expiry} {r.value[0]} {strike}",
+                        last=p, bid=round(p * 0.98, 2), ask=round(p * 1.02, 2),
+                    )
+                )
+        return out
+
+    async def preview_option_order(self, request: OrderRequest) -> OrderPreview:
+        px = request.limit_price or 1.0
+        cost = px * request.quantity * 100  # 100x multiplier
+        return OrderPreview(ok=True, estimated_cost=round(cost, 2), estimated_commission=0.0,
+                            buying_power_after=round(self._cash - cost, 2))
+
+    async def place_option_order(self, request: OrderRequest) -> BrokerOrder:
+        existing = self._orders.get(request.client_order_id)
+        if existing is not None:
+            return existing
+        fill_px = request.limit_price or 1.0
+        order = BrokerOrder(
+            client_order_id=request.client_order_id,
+            broker_order_id=f"MOCK-OPT-{len(self._orders) + 1}",
+            symbol=request.option_contract_symbol
+            or f"{request.symbol} {request.option_expiry} {request.instrument_type.value}",
+            side=request.side, quantity=request.quantity,
+            filled_quantity=request.quantity, avg_fill_price=fill_px,
+            status=OrderStatus.FILLED, order_type=request.order_type,
+            limit_price=request.limit_price, updated_at=self._now,
+        )
+        self._orders[request.client_order_id] = order
+        signed = 1 if request.side == Side.BUY else -1
+        self._cash -= signed * fill_px * request.quantity * 100
         return order
 
     # --- fill engine ---------------------------------------------------------
