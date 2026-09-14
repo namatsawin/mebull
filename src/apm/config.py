@@ -80,11 +80,14 @@ class Settings(BaseSettings):
     # Cap a single option premium at this % of NAV (max loss = premium). On a tiny account one
     # contract can be a large %; this bounds the concentration you accept.
     option_max_premium_pct_nav: float = 40.0
-    # Target |delta| band for entries (ATM-ish for gamma, per Model B).
-    option_delta_min: float = 0.40
-    option_delta_max: float = 0.65
-    # Liquidity filter: reject if bid/ask spread exceeds this % of mid.
-    option_max_spread_pct: float = 12.0
+    # Target |delta| band for entries (ATM-ish for gamma, per Model B: 0.50-0.60).
+    option_delta_min: float = 0.50
+    option_delta_max: float = 0.60
+    # Liquidity filter: reject if bid/ask spread exceeds this % of mid (Model B guardrail: 5%).
+    option_max_spread_pct: float = 5.0
+    # Model B entry trigger: require a 5m volume z-score >= this to confirm order-flow (>+2.0).
+    # Enforced only when volume_z data is available (Yahoo-seeded); else falls back to momentum.
+    option_volume_z_min: float = 2.0
     # Deterministic exits on premium P&L.
     option_take_profit_pct: float = 30.0
     option_stop_loss_pct: float = 20.0

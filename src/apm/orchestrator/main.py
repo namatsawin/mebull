@@ -144,6 +144,18 @@ async def async_main() -> None:
     await asyncio.to_thread(run_migrations)
     await _wait_for_db()
 
+    # Seed historical bars (HV20 / volume_z / VIX) from the free source if missing/stale.
+    # Graceful: never block startup on data seeding.
+    try:
+        from apm.marketdata import seed_history
+
+        symbols = settings.watchlist_symbols
+        if symbols:
+            added = await seed_history(symbols)
+            log.info("startup.history_seeded", bars_added=added)
+    except Exception as exc:  # noqa: BLE001 - data seeding must never block the app
+        log.warning("startup.history_seed_failed", error=str(exc))
+
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

@@ -115,21 +115,32 @@ def _reward_risk(t) -> float:
 
 
 def _rank_entry(context, policy: SupervisorPolicy, held: dict):
+    settings = get_settings()
     veto = policy.normalized_veto()
-    cands = [
-        t
-        for t in context.technicals
-        if t.symbol.upper() not in held
-        and t.symbol.upper() not in veto
-        and t.trend == "up"
-        and (t.momentum_5 or 0) >= policy.min_momentum_pct
-        and (t.pct_to_resistance or 0) >= policy.min_room_to_target_pct
-        and _reward_risk(t) >= policy.min_reward_risk
-    ]
+    cands = []
+    for t in context.technicals:
+        if t.symbol.upper() in held or t.symbol.upper() in veto:
+            continue
+        if t.trend != "up":
+            continue
+        if (t.momentum_5 or 0) < policy.min_momentum_pct:
+            continue
+        if (t.pct_to_resistance or 0) < policy.min_room_to_target_pct:
+            continue
+        if _reward_risk(t) < policy.min_reward_risk:
+            continue
+        # Model B order-flow trigger: when we HAVE volume_z, require the spike; when the free
+        # data isn't seeded yet, fall back to momentum (non-spec but graceful).
+        if t.volume_z is not None and t.volume_z < settings.option_volume_z_min:
+            continue
+        cands.append(t)
     if not cands:
         return None
-    # Strongest intraday momentum wins.
-    cands.sort(key=lambda t: (t.momentum_5 or 0), reverse=True)
+    # Rank by order-flow (volume_z) when available, else by momentum.
+    cands.sort(
+        key=lambda t: (t.volume_z if t.volume_z is not None else -9, t.momentum_5 or 0),
+        reverse=True,
+    )
     return cands[0]
 
 

@@ -12,7 +12,7 @@ from apm.db.models import Decision as DecisionRow
 from apm.decision.context import ContextQuote, DecisionContext, Technicals
 from apm.domain import Bar
 from apm.learning.evaluator import LearningService
-from apm.marketdata import minutes_to_close
+from apm.marketdata import hv20, latest_vix, minutes_to_close, volume_z
 from apm.memory.service import MemoryService
 from apm.observability import get_logger
 from apm.portfolio.state import PortfolioState
@@ -68,6 +68,17 @@ class ContextBuilder:
         # can build a risk-defined entry. Prefer the intraday snapshot (day high/low/open/prev
         # close); fall back to bars. Degrades gracefully if neither is available (§37).
         technicals = await self._technicals(raw_quotes)
+        # Enrich each symbol with free historical signals (HV20, volume_z) + global VIX.
+        for t in technicals:
+            try:
+                t.hv20 = await hv20(t.symbol)
+                t.volume_z = await volume_z(t.symbol)
+            except Exception as exc:  # noqa: BLE001 - historical data optional
+                log.warning("context.history_unavailable", symbol=t.symbol, error=str(exc))
+        try:
+            vix = await latest_vix()
+        except Exception:  # noqa: BLE001
+            vix = None
         breadth = _breadth(quotes)
 
         option_chains: dict[str, list[dict]] = {}
@@ -89,6 +100,7 @@ class ContextBuilder:
             quotes=quotes,
             technicals=technicals,
             breadth=breadth,
+            vix=vix,
             option_chains=option_chains,
             market_snapshot=market_snapshot,
             discovery=discovery,

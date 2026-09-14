@@ -22,6 +22,9 @@ dependencies = [
     "fastapi>=0.111",
     "uvicorn>=0.30",
     "httpx>=0.27",
+    # Free historical market data (bars/HV/VIX) — Webull's bars endpoint 404s for this
+    # entitlement. Data-only use (never execution). pandas comes as a transitive dep.
+    "yfinance>=0.2.40",
 ]
 
 [project.optional-dependencies]

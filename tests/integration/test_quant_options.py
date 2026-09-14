@@ -67,6 +67,40 @@ async def test_quant_option_entry(monkeypatch, clean_db):
     assert d.exit_plan.take_profit and d.exit_plan.stop_loss
 
 
+def _tech(**kw):
+    base = dict(
+        symbol="NVDA", last=100, support=98, resistance=104,
+        pct_to_support=2.0, pct_to_resistance=4.0, atr_pct=3.0, momentum_5=1.5, trend="up",
+    )
+    base.update(kw)
+    return Technicals(**base)
+
+
+def _ctx(tech):
+    return DecisionContext(
+        trigger="T", portfolio_id="main-portfolio", as_of="now",
+        portfolio_state={"portfolio_value": 5000, "positions": []}, buying_power=5000,
+        watchlist=["NVDA"], technicals=[tech],
+        breadth={"advancers": 4, "decliners": 0, "avg_change_pct": 1.5, "regime": "risk_on"},
+    )
+
+
+def test_volume_z_trigger_gates_entry():
+    """Model B: when volume_z data exists, a below-threshold z blocks entry; a spike allows it."""
+    from apm.config import get_settings
+    from apm.strategy.policy import SupervisorPolicy
+    from apm.strategy.rules import _rank_entry
+
+    get_settings.cache_clear()
+    policy = SupervisorPolicy()
+    # z below 2.0 → filtered out
+    assert _rank_entry(_ctx(_tech(volume_z=0.5)), policy, {}) is None
+    # z above 2.0 → passes
+    assert _rank_entry(_ctx(_tech(volume_z=2.5)), policy, {}) is not None
+    # no z data (None) → graceful momentum fallback still allows
+    assert _rank_entry(_ctx(_tech(volume_z=None)), policy, {}) is not None
+
+
 @pytest.mark.asyncio
 async def test_eod_flatten_closes_option(clean_db):
     """A held mock option position must be flattened (sold to close) by flatten_all."""

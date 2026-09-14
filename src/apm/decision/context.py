@@ -32,6 +32,9 @@ class Technicals(BaseModel):
     atr_pct: float | None = None  # avg daily range %, for stop sizing
     momentum_5: float | None = None  # % change over last 5 bars
     trend: str | None = None  # "up" | "down" | "flat"
+    # From free historical bars (Yahoo) — the real quant inputs Model B needs.
+    hv20: float | None = None  # 20-day annualized historical volatility (%)
+    volume_z: float | None = None  # z-score of latest 5m volume vs prior 20 bars
 
 
 class DecisionContext(BaseModel):
@@ -51,6 +54,7 @@ class DecisionContext(BaseModel):
     # breadth summary — the risk-anchoring context a disciplined PM needs. No extra LLM call.
     technicals: list[Technicals] = Field(default_factory=list)
     breadth: dict = Field(default_factory=dict)
+    vix: float | None = None  # CBOE VIX (free source) — global risk read for sizing
     # Affordable option contracts per underlying (only when options are enabled): compact
     # {symbol: [{right, strike, expiry, mid, cost}]} so the AI can pick a contract it can pay for.
     option_chains: dict[str, list[dict]] = Field(default_factory=dict)

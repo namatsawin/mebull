@@ -14,7 +14,7 @@ from __future__ import annotations
 import datetime as dt
 from enum import StrEnum
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from apm.db.base import Base, TimestampMixin, new_uuid
@@ -472,6 +472,29 @@ class SupervisorPolicyRow(Base):
     risk_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class PriceBar(Base):
+    """Historical OHLCV bar (free source, e.g. Yahoo) — the time-series Webull's entitlement
+    doesn't serve. Powers HV20 / volume z-score / VIX / backtest. Data-only; never execution.
+    Unique per (symbol, interval, ts)."""
+
+    __tablename__ = "price_bar"
+    __table_args__ = (
+        UniqueConstraint("symbol", "interval", "ts", name="uq_price_bar_symbol_interval_ts"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    interval: Mapped[str] = mapped_column(String(8), index=True)  # "1d" | "5m"
+    ts: Mapped[dt.datetime] = mapped_column(index=True)
+    open: Mapped[float] = mapped_column(Float)
+    high: Mapped[float] = mapped_column(Float)
+    low: Mapped[float] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(16), default="yahoo")
+    created_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.UTC))
 
 
 class AuditLog(Base):

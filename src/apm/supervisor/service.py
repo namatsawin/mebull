@@ -33,6 +33,7 @@ def _heuristic_policy(context: DecisionContext) -> SupervisorPolicy:
     breadth = context.breadth or {}
     regime = breadth.get("regime", "unknown")
     avg = breadth.get("avg_change_pct", 0.0) or 0.0
+    vix = context.vix
     trade = regime in _LONG_REGIMES
     if regime == "risk_on":
         risk_mult, max_pos = 1.0, 1
@@ -40,16 +41,27 @@ def _heuristic_policy(context: DecisionContext) -> SupervisorPolicy:
         risk_mult, max_pos = 0.75, 1
     else:
         risk_mult, max_pos = 0.0, 1
+    # VIX as a global risk multiplier: throttle back when volatility is elevated.
+    vix_note = ""
+    if vix is not None:
+        if vix >= 30:
+            risk_mult, trade = 0.0, False
+            vix_note = f" VIX {vix} ≥30 → stand down (high-vol)."
+        elif vix >= 22:
+            risk_mult *= 0.5
+            vix_note = f" VIX {vix} elevated → halve risk."
+        else:
+            vix_note = f" VIX {vix} calm."
     return SupervisorPolicy(
         regime=regime,
         trade_today=trade,
         allow_longs=True,
         allow_shorts=False,
-        risk_multiplier=risk_mult,
+        risk_multiplier=round(risk_mult, 2),
         max_positions=max_pos,
         rationale=(
-            f"[heuristic] regime={regime}, avg_change={avg}%. "
-            f"{'Longs enabled' if trade else 'Stand down (no long corroboration)'}."
+            f"[heuristic] regime={regime}, avg_change={avg}%.{vix_note} "
+            f"{'Longs enabled' if trade else 'Stand down.'}"
         ),
     )
 
@@ -81,6 +93,7 @@ class SupervisorService:
         schema = SupervisorPolicy.model_json_schema()
         brief = {
             "breadth": context.breadth,
+            "vix": context.vix,
             "scorecard": context.scorecard,
             "positions": context.portfolio_state.get("positions", []),
             "buying_power": context.buying_power,
