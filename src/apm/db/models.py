@@ -451,6 +451,29 @@ class SystemFlag(Base, TimestampMixin):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class SupervisorPolicyRow(Base):
+    """The active trading policy set by the AI supervisor (B architecture, spec §14).
+
+    In quant mode the deterministic rules engine reads the latest active row each cycle — no
+    AI in the hot path. The supervisor (a few AI calls/day) writes a new row to steer regime,
+    risk sizing, and vetoes. ``payload`` holds the full SupervisorPolicy as JSON.
+    """
+
+    __tablename__ = "supervisor_policy"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    portfolio_id: Mapped[str] = mapped_column(index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        index=True, default=lambda: dt.datetime.now(dt.UTC)
+    )
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    regime: Mapped[str] = mapped_column(String(32), default="unknown")
+    trade_today: Mapped[bool] = mapped_column(Boolean, default=True)
+    risk_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class AuditLog(Base):
     """Full audit trail of the AI's reasoning every trigger cycle — order or not (spec §17).
 

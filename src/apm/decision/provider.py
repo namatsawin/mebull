@@ -112,6 +112,11 @@ class AnthropicProvider:
 
 def build_provider() -> ClaudeProvider:
     settings = get_settings()
+    # Quant mode (B): a deterministic rules engine decides every cycle — no AI in the hot path.
+    if settings.strategy_mode == "quant":
+        from apm.strategy.rules import QuantRuleProvider
+
+        return QuantRuleProvider()
     if settings.claude_provider.value == "anthropic":
         if not (settings.anthropic_api_key and settings.anthropic_api_key.get_secret_value()):
             raise RuntimeError("claude_provider=anthropic requires ANTHROPIC_API_KEY")

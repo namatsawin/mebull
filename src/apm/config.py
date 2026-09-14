@@ -53,6 +53,15 @@ class Settings(BaseSettings):
     # cost saver. Set false for local dev/testing so the loop runs any time.
     market_hours_only: bool = True
 
+    # --- Strategy mode (spec §14) -------------------------------------------
+    # "ai"    : Claude decides every cycle (flexible, ~1 API call/cycle).
+    # "quant" : a deterministic rules engine decides every cycle (no AI in the hot path); a
+    #           lightweight AI *supervisor* runs a few times/day to set the policy the rules
+    #           read (regime, risk multiplier, vetoes). Cheap + reproducible (B architecture).
+    strategy_mode: str = "ai"
+    # How often the AI supervisor refreshes its policy, in minutes (quant mode only).
+    supervisor_interval_minutes: int = 120
+
     # --- Trading style / horizon --------------------------------------------
     # The trader's mandate, surfaced to the AI each cycle. "daytrade"/"scalp" bias toward
     # active intraday trading; "swing" allows multi-day holds. Informational for the model —
@@ -116,6 +125,8 @@ class Settings(BaseSettings):
             "decision_interval_seconds": self.decision_interval_seconds,
             "market_hours_only": self.market_hours_only,
             "options_enabled": self.options_enabled,
+            "strategy_mode": self.strategy_mode,
+            "supervisor_interval_minutes": self.supervisor_interval_minutes,
             "trading_style": self.trading_style,
             "intraday_only": self.intraday_only,
             "flatten_before_close_minutes": self.flatten_before_close_minutes,

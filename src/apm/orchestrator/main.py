@@ -62,6 +62,7 @@ async def _decision_loop(
     market_hours_only: bool,
     intraday_only: bool,
     flatten_before_close_minutes: int,
+    supervisor_interval_minutes: int = 120,
 ) -> None:
     """Run one decision cycle on every wall-clock boundary until stopped.
 
@@ -74,6 +75,8 @@ async def _decision_loop(
     guarantee — no position is ever held overnight, spec §36).
     """
     flattened_today = False
+    last_supervisor = 0.0
+    sup_interval = supervisor_interval_minutes * 60
     while not stop.is_set():
         now = dt.datetime.now(dt.UTC)
         mins_left = minutes_to_close(now)
@@ -95,6 +98,14 @@ async def _decision_loop(
                 log.info("loop.eod_hold", minutes_to_close=mins_left)
         else:
             flattened_today = False
+            # Quant mode (B): refresh the AI supervisor policy when due — a few times/day,
+            # before the deterministic cycle so the fresh policy applies immediately.
+            if app.supervisor_enabled and (time.time() - last_supervisor) >= sup_interval:
+                try:
+                    await app.run_supervisor()
+                    last_supervisor = time.time()
+                except Exception as exc:  # noqa: BLE001 - supervisor must not kill the loop
+                    log.error("loop.supervisor_failed", error=str(exc))
             try:
                 decision = await app.run_once("PERIODIC")
                 log.info("loop.cycle", decision_type=decision.decision_type.value)
@@ -151,6 +162,7 @@ async def async_main() -> None:
             market_hours_only=settings.market_hours_only,
             intraday_only=settings.intraday_only,
             flatten_before_close_minutes=settings.flatten_before_close_minutes,
+            supervisor_interval_minutes=settings.supervisor_interval_minutes,
         )
     )
     log.info(

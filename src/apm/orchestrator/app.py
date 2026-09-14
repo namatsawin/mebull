@@ -59,14 +59,22 @@ class TradingApp:
             executor = RealCoordinator(exec_service, self._portfolio, self._adapter)
 
         self._executor = executor
+        self._context_builder = ContextBuilder(self._adapter, self._memory, learning=self._learning)
         self._engine = DecisionEngine(
             portfolio=self._portfolio,
-            context_builder=ContextBuilder(self._adapter, self._memory),
+            context_builder=self._context_builder,
             provider=build_provider(),
             journal=self._journal,
             memory=self._memory,
             executor=executor,
         )
+        # Quant mode (B): the AI supervisor sets policy a few times/day; the engine decides
+        # deterministically each cycle from that policy.
+        self._supervisor = None
+        if self._settings.strategy_mode == "quant":
+            from apm.supervisor import SupervisorService
+
+            self._supervisor = SupervisorService()
 
     @property
     def reconcile(self) -> ReconciliationService:
@@ -90,6 +98,25 @@ class TradingApp:
         except Exception as exc:  # noqa: BLE001 - learning must never break the loop
             log.warning("learning.failed", error=str(exc))
         return decision
+
+    @property
+    def supervisor_enabled(self) -> bool:
+        return self._supervisor is not None
+
+    async def run_supervisor(self) -> None:
+        """Refresh the SupervisorPolicy (quant mode only). A few AI calls/day — not per cycle."""
+        if self._supervisor is None:
+            return
+        await self._portfolio.ensure_portfolio()
+        state = await self._portfolio.build_state()
+        context = await self._context_builder.build("SUPERVISOR", state)
+        policy = await self._supervisor.refresh(context)
+        log.info(
+            "app.supervisor_refreshed",
+            regime=policy.regime,
+            trade_today=policy.trade_today,
+            risk_multiplier=policy.risk_multiplier,
+        )
 
     async def flatten_positions(self, *, reason: str = "eod-flatten") -> int:
         """Deterministically close all open positions (intraday-flat guarantee). No-op if the
