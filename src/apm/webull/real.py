@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import time
 from typing import Any
 
 from apm.domain import (
@@ -80,6 +81,7 @@ class RealWebullAdapter:
         region: str,
         account_id: str | None,
         market_category: str = "US_STOCK",
+        min_request_interval: float = 1.0,
     ) -> None:
         self._app_key = app_key
         self._app_secret = app_secret
@@ -93,6 +95,22 @@ class RealWebullAdapter:
         self._account = None  # AccountV2
         self._orders = None  # OrderOperationV3
         self._market = None  # MarketData
+        # Throttle: the Webull API rate-limits bursts (429). Serialize all calls and keep a
+        # minimum gap between them so a decision cycle's several reads don't trip the limit.
+        self._lock = asyncio.Lock()
+        self._min_interval = min_request_interval
+        self._last_call = 0.0
+
+    async def _dispatch(self, fn, *args):
+        """Run a (sync) SDK call off-thread, serialized + spaced to respect rate limits."""
+        async with self._lock:
+            gap = self._min_interval - (time.monotonic() - self._last_call)
+            if gap > 0:
+                await asyncio.sleep(gap)
+            try:
+                return await asyncio.to_thread(fn, *args)
+            finally:
+                self._last_call = time.monotonic()
 
     # --- lifecycle -----------------------------------------------------------
     async def authenticate(self) -> None:
@@ -108,10 +126,22 @@ class RealWebullAdapter:
         from webull.trade.trade.v2.account_info_v2 import AccountV2
         from webull.trade.trade.v3.order_operation_v3 import OrderOperationV3
 
-        self._api = ApiClient(self._app_key, self._app_secret, self._region)
-        # Obtain + attach the x-access-token (signed with app_key/secret). Cached to a local
-        # file and refreshed automatically by the SDK on subsequent runs.
-        TokenManager().init_token(self._api)
+        self._api = ApiClient(
+            self._app_key, self._app_secret, self._region,
+            auto_retry=True, max_retry_num=3,
+        )
+        # Reuse a previously verified access token if one is cached locally; only run the
+        # interactive create+verify flow (blocks until the token is approved in the Webull
+        # app) when there is no cached token. This avoids minting a new PENDING token on
+        # every run. Set up the first token with `apm-webull-token` (see docs/RUNBOOK).
+        tm = TokenManager()
+        cached = tm.load_token_from_local()
+        token = getattr(cached, "token", None) if cached else None
+        if token:
+            self._api.set_token(token)
+            log.info("webull.token.cached")
+        else:
+            tm.init_token(self._api)
         self._account = AccountV2(self._api)
         self._orders = OrderOperationV3(self._api)
         self._market = MarketData(self._api)
@@ -135,7 +165,7 @@ class RealWebullAdapter:
     # --- reads ---------------------------------------------------------------
     async def get_account_balance(self) -> AccountBalance:
         await self._ensure()
-        data = _json(await asyncio.to_thread(self._account.get_account_balance, self._account_id))
+        data = _json(await self._dispatch(self._account.get_account_balance, self._account_id))
         body = _first(data, "data", default=data)
         return AccountBalance(
             account_id=self._account_id or "",
@@ -148,7 +178,7 @@ class RealWebullAdapter:
 
     async def get_positions(self) -> list[Position]:
         await self._ensure()
-        data = _json(await asyncio.to_thread(self._account.get_account_position, self._account_id))
+        data = _json(await self._dispatch(self._account.get_account_position, self._account_id))
         rows = _first(data, "data", "positions", default=[]) or []
         out: list[Position] = []
         for r in rows:
@@ -167,14 +197,14 @@ class RealWebullAdapter:
 
     async def get_open_orders(self) -> list[BrokerOrder]:
         await self._ensure()
-        data = _json(await asyncio.to_thread(self._orders.get_order_open, self._account_id))
+        data = _json(await self._dispatch(self._orders.get_order_open, self._account_id))
         rows = _first(data, "data", "orders", default=[]) or []
         return [self._parse_order(r) for r in rows]
 
     async def get_order(self, client_order_id: str) -> BrokerOrder | None:
         await self._ensure()
         data = _json(
-            await asyncio.to_thread(
+            await self._dispatch(
                 self._orders.get_order_detail, self._account_id, client_order_id
             )
         )
@@ -210,7 +240,7 @@ class RealWebullAdapter:
     async def get_quotes(self, symbols: list[str]) -> list[Quote]:
         await self._ensure()
         data = _json(
-            await asyncio.to_thread(self._market.get_snapshot, ",".join(symbols), self._category)
+            await self._dispatch(self._market.get_snapshot, ",".join(symbols), self._category)
         )
         rows = _first(data, "data", default=data) or []
         rows = rows if isinstance(rows, list) else [rows]
@@ -233,7 +263,7 @@ class RealWebullAdapter:
     ) -> list[Bar]:
         await self._ensure()
         data = _json(
-            await asyncio.to_thread(
+            await self._dispatch(
                 self._market.get_history_bar, symbol, self._category, timespan, str(count)
             )
         )
@@ -286,7 +316,7 @@ class RealWebullAdapter:
     async def preview_order(self, request: OrderRequest) -> OrderPreview:
         await self._ensure()
         data = _json(
-            await asyncio.to_thread(
+            await self._dispatch(
                 self._orders.preview_order, self._account_id, [self._order_payload(request)]
             )
         )
@@ -302,7 +332,7 @@ class RealWebullAdapter:
     async def place_order(self, request: OrderRequest) -> BrokerOrder:
         await self._ensure()
         data = _json(
-            await asyncio.to_thread(
+            await self._dispatch(
                 self._orders.place_order, self._account_id, [self._order_payload(request)]
             )
         )
@@ -321,7 +351,7 @@ class RealWebullAdapter:
 
     async def cancel_order(self, client_order_id: str) -> BrokerOrder:
         await self._ensure()
-        await asyncio.to_thread(self._orders.cancel_order, self._account_id, client_order_id)
+        await self._dispatch(self._orders.cancel_order, self._account_id, client_order_id)
         order = await self.get_order(client_order_id)
         if order is None:
             return BrokerOrder(

@@ -45,9 +45,16 @@ class ContextBuilder:
             )
         )
         quotes: list[ContextQuote] = []
+        market_snapshot: dict = {}
         if symbols:
-            for q in await self._adapter.get_quotes(symbols):
-                quotes.append(ContextQuote(symbol=q.symbol, price=q.price))
+            try:
+                for q in await self._adapter.get_quotes(symbols):
+                    quotes.append(ContextQuote(symbol=q.symbol, price=q.price))
+            except Exception as exc:  # noqa: BLE001 - market data may be down/unsubscribed
+                # Degrade gracefully (spec §37): keep reasoning/journaling; the Safety Guard
+                # blocks new orders when market data is unavailable.
+                market_snapshot["market_data_error"] = str(exc)
+                log.warning("context.quotes_unavailable", error=str(exc))
 
         discovery: list[dict] = []
         if self._discovery is not None:
@@ -61,6 +68,7 @@ class ContextBuilder:
             buying_power=state.buying_power,
             watchlist=watchlist,
             quotes=quotes,
+            market_snapshot=market_snapshot,
             discovery=discovery,
             recent_decisions=await self._recent_decisions(state.portfolio_id),
             relevant_memories=await self._memory.recall(limit=10),
