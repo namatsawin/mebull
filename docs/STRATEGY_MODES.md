@@ -49,9 +49,19 @@ When `APM_OPTIONS_ENABLED=true` and quant mode:
 > ⚠️ Small-account reality: on a tiny NAV, one option contract can be a large % of the account
 > (premium = max loss). `APM_OPTION_MAX_PREMIUM_PCT_NAV` bounds the concentration you accept.
 
-## Data notes (this account's entitlement)
-- Quotes/snapshots: Nasdaq Basic ✅. **Historical bars endpoint 404s** → technicals + breadth
-  are derived from the intraday **snapshot** (day open/high/low/prev-close), not bars.
-- Options: need **OPRA**. Chain via `get_option_contracts` (STANDARD contracts only — adjusted
-  `2GOOG`/FLEX are filtered out), greeks/IV/OI via `get_option_snapshot`.
-- No index category → **no VIX** via the API (proxy with an ETF or realized vol if needed).
+## Data layers
+- **Real-time (Webull)**: Nasdaq Basic quotes/snapshots ✅ + OPRA options (chain STANDARD-only,
+  greeks/IV/OI via `get_option_snapshot`). Used for live price/spread/greeks + execution.
+- **Historical (free, Yahoo)**: Webull's bars endpoint 404s for this entitlement, so daily+5m
+  bars and `^VIX` are seeded into `price_bar` at startup (`marketdata/history.py`, idempotent,
+  graceful). Powers **HV20**, **5m volume_z** (Model B order-flow trigger), and **VIX** (supervisor
+  risk sizing). Data-only; never execution. yfinance is unofficial + ~15m delayed — fine for the
+  historical/context layer; the live trigger still uses Webull real-time.
+- Intraday snapshot (Webull) still drives support/resistance/ATR/trend (day range); Yahoo adds
+  the longer-horizon stats the snapshot can't (HV, volume baseline, VIX).
+
+## Still missing / next
+- **Backtest** — the rules are NOT yet validated to have edge. Highest-priority next step.
+- **iv_rank_30d** — needs accumulated IV history (self-collect) or a vendor.
+- **Model A (credit spreads)** — needs multi-leg orders + more capital (spread max-loss ≫ 1% NAV).
+- **Settled-cash / GFV** tracking (cash account, T+1) — not modeled yet.
