@@ -32,7 +32,11 @@ Anthropic API (pay-per-token) · Webull official Python SDK · structlog · Fast
 - `claude/system-prompt.md` — the portfolio-manager identity/prompt.
 - `src/apm/` — the system, one module per responsibility.
 
-## Milestones
-M0 scaffold → M1 Webull (read-only) → M2 portfolio+reconcile → M3 journal+memory →
-M4 Claude engine → M5 events+scheduler (analysis-only) → M6 Safety Guard → M7 sandbox
-execution → M8 learning+research → M9 REAL (flag-gated). Current: **M0**.
+## Milestones — all implemented ✅
+M0 scaffold → M1 Webull adapter → M2 portfolio+reconcile → M3 journal+memory →
+M4 Claude engine → M5 events+scheduler → M6 Safety Guard+kill switch → M7 guarded execution
+→ M8 learning+backtest+strategy/experiment/reviews → M9 REAL (flag-gated).
+
+**Before enabling REAL:** complete `docs/PHASE0_WEBULL_CHECKLIST.md` and run against Webull
+SANDBOX first to verify the SDK response/order field mappings flagged in
+`src/apm/webull/real.py`. Runs today end-to-end in `MOCK` mode with zero external creds.
