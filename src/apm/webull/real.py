@@ -315,7 +315,14 @@ class RealWebullAdapter:
         VERIFY against sandbox before REAL (docs/PHASE0_WEBULL_CHECKLIST).
         """
         itype = req.instrument_type.value
-        instrument = "OPTION" if "OPTION" in itype else itype
+        # Webull v3 trading API expects EQUITY for stocks/ETFs and OPTION for options — NOT the
+        # domain names STOCK/ETF (those return 417 "Instrument type invalid"). LIVE-VERIFIED.
+        if "OPTION" in itype:
+            instrument = "OPTION"
+        elif itype in ("STOCK", "ETF"):
+            instrument = "EQUITY"
+        else:
+            instrument = itype
         payload: dict[str, Any] = {
             "client_order_id": req.client_order_id,
             "symbol": req.symbol.upper(),
@@ -325,7 +332,10 @@ class RealWebullAdapter:
             "order_type": req.order_type.value,
             "quantity": str(req.quantity),
             "time_in_force": req.time_in_force.value,
-            "extended_hours_trading": req.extended_hours,
+            # v3 US equities: which sessions the order is valid in. "N" = regular hours only;
+            # "Y" would allow pre/post-market. LIVE-VERIFIED (missing/invalid -> 417).
+            "support_trading_session": "Y" if req.extended_hours else "N",
+            "entrust_type": "QTY",
         }
         if req.limit_price is not None:
             payload["limit_price"] = str(req.limit_price)

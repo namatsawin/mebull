@@ -164,13 +164,20 @@ def _mandate(settings) -> dict:
     """The intraday mandate for this cycle: style, intraday-flat rule, minutes to close, and
     per-trade risk guidance. Deterministic — from config + wall-clock (spec §45)."""
     mins = minutes_to_close(dt.datetime.now(dt.UTC))
+    instruments = ["stocks/ETFs"] + (["single-leg options"] if settings.options_enabled else [])
     m = {
         "style": settings.trading_style,
         "intraday_only": settings.intraday_only,
         "max_risk_per_trade_pct": settings.max_risk_per_trade_pct,
         "minutes_to_close": mins,
         "must_flatten_within_minutes": settings.flatten_before_close_minutes,
+        "instruments_available": instruments,
     }
+    if not settings.options_enabled:
+        m["instruments_note"] = (
+            "Options data is unavailable this session — trade shares/ETFs only. Size positions "
+            "to your buying power (you may only afford a few shares)."
+        )
     if settings.intraday_only and mins is not None:
         # A clear, actionable instruction the model can act on near the bell.
         if mins <= settings.flatten_before_close_minutes:
