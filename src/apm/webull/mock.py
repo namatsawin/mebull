@@ -47,7 +47,8 @@ class MockWebullAdapter:
         self._positions: dict[str, Position] = {}
         self._orders: dict[str, BrokerOrder] = {}
         self._prices: dict[str, float] = {}
-        self._now = now or dt.datetime(2026, 1, 2, 15, 0, tzinfo=dt.UTC)
+        # Default to real UTC now so freshness/staleness checks behave against wall-clock.
+        self._now = now or dt.datetime.now(dt.UTC)
 
     # --- test/sim controls ---------------------------------------------------
     def set_quote(self, symbol: str, price: float) -> None:

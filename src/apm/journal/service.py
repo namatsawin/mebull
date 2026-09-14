@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from apm.config import get_settings
 from apm.db import session_scope
@@ -23,6 +23,9 @@ from apm.db.models import (
 )
 from apm.db.models import (
     Decision as DecisionRow,
+)
+from apm.db.models import (
+    Trade as TradeModel,
 )
 from apm.decision.contract import Decision
 from apm.domain import BrokerOrder, OrderRequest
@@ -197,3 +200,107 @@ class JournalService:
                     occurred_at=_utcnow(),
                 )
             )
+
+    # --- safety-context helpers (used by the execution service) --------------
+    async def existing_client_order_ids(self) -> set[str]:
+        async with session_scope() as s:
+            rows = (await s.scalars(select(OrderRecord.client_order_id))).all()
+        return set(rows)
+
+    async def recent_order_count(self, *, seconds: int = 60) -> int:
+        cutoff = _utcnow() - dt.timedelta(seconds=seconds)
+        async with session_scope() as s:
+            return await s.scalar(
+                select(func.count())
+                .select_from(OrderRecord)
+                .where(OrderRecord.submitted_at >= cutoff)
+            ) or 0
+
+    # --- trade book (aggregate one open Trade per symbol) (spec §18-19) ------
+    async def apply_fill(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        fees: float = 0.0,
+        decision_id: str | None = None,
+        thesis: str | None = None,
+        confidence: float | None = None,
+    ) -> str:
+        """Update the open Trade for a symbol from a fill; open/close as needed.
+
+        Returns the trade_id. Long-only/short aggregate: adding in the same direction
+        averages entry; reducing realizes P&L; crossing through zero closes then reopens.
+        """
+        signed = quantity if side == "BUY" else -quantity
+        async with session_scope() as s:
+            trade = await s.scalar(
+                select(TradeModel).where(
+                    TradeModel.portfolio_id == get_settings().portfolio_id,
+                    TradeModel.symbol == symbol,
+                    TradeModel.status == "OPEN",
+                )
+            )
+            if trade is None:
+                trade = TradeModel(
+                    decision_id=decision_id,
+                    portfolio_id=get_settings().portfolio_id,
+                    symbol=symbol,
+                    entry_time=_utcnow(),
+                    entry_price=price,
+                    quantity=signed,
+                    capital_allocated=abs(signed) * price,
+                    fees=fees,
+                    thesis=thesis,
+                    entry_reason=thesis,
+                    claude_confidence=confidence,
+                    decision_timestamp=_utcnow(),
+                    net_pnl=0.0,
+                    gross_pnl=0.0,
+                    status="OPEN",
+                )
+                s.add(trade)
+                await s.flush()
+                s.add(
+                    TradeEvent(
+                        trade_id=trade.id,
+                        event_type="OPEN",
+                        payload={"price": price, "quantity": signed},
+                        occurred_at=_utcnow(),
+                    )
+                )
+                return trade.id
+
+            prev_qty = trade.quantity
+            new_qty = prev_qty + signed
+            same_dir = (prev_qty >= 0) == (signed >= 0)
+            trade.fees = (trade.fees or 0.0) + fees
+
+            if same_dir:  # adding -> weighted-average entry
+                total = abs(prev_qty) + abs(signed)
+                trade.entry_price = (
+                    (trade.entry_price * abs(prev_qty) + price * abs(signed)) / total
+                )
+                trade.quantity = new_qty
+            else:  # reducing / closing -> realize P&L on the closed portion
+                closed = min(abs(signed), abs(prev_qty))
+                direction = 1 if prev_qty > 0 else -1
+                gross = (price - trade.entry_price) * closed * direction
+                realized = gross - fees
+                trade.gross_pnl = (trade.gross_pnl or 0.0) + gross
+                trade.net_pnl = (trade.net_pnl or 0.0) + realized
+                trade.quantity = new_qty
+                if abs(new_qty) < 1e-9:
+                    trade.quantity = 0.0
+                    trade.status = "CLOSED"
+                    trade.exit_time = _utcnow()
+                    trade.exit_price = price
+                    if trade.capital_allocated:
+                        trade.return_pct = trade.net_pnl / trade.capital_allocated
+                    trade.holding_period = (trade.exit_time - trade.entry_time).total_seconds()
+                    s.add(TradeEvent(trade_id=trade.id, event_type="CLOSE",
+                                     payload={"price": price, "net_pnl": trade.net_pnl},
+                                     occurred_at=_utcnow()))
+            return trade.id

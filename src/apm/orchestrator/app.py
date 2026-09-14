@@ -14,14 +14,17 @@ from apm.config import Settings, get_settings
 from apm.db import session_scope
 from apm.db.models import SystemEvent
 from apm.decision.context_builder import ContextBuilder
-from apm.decision.engine import DecisionEngine, ExecutionCoordinator
+from apm.decision.engine import DecisionEngine
 from apm.decision.provider import build_provider
 from apm.events.detector import Event, EventDetector
+from apm.execution.coordinator import ExecutionCoordinator
+from apm.execution.service import ExecutionService
 from apm.journal.service import JournalService
 from apm.memory.service import MemoryService
 from apm.observability import get_logger
 from apm.portfolio.service import PortfolioService
 from apm.reconcile.service import ReconciliationService
+from apm.safety.guard import SafetyGuard
 from apm.webull import build_adapter
 
 log = get_logger("app")
@@ -33,6 +36,7 @@ class TradingApp:
         settings: Settings | None = None,
         *,
         executor: ExecutionCoordinator | None = None,
+        enable_execution: bool = True,
     ) -> None:
         self._settings = settings or get_settings()
         self._adapter = build_adapter(self._settings)
@@ -41,6 +45,20 @@ class TradingApp:
         self._journal = JournalService()
         self._reconcile = ReconciliationService(self._adapter, self._portfolio)
         self._detector = EventDetector()
+
+        # Execution stack: decisions that place orders route through the Safety Guard
+        # (spec §30, §34). Every mode uses it; the guard gates whether REAL is permitted.
+        if executor is None and enable_execution:
+            guard = SafetyGuard(settings=self._settings)
+            exec_service = ExecutionService(
+                adapter=self._adapter,
+                guard=guard,
+                journal=self._journal,
+                portfolio=self._portfolio,
+                reconcile=self._reconcile,
+            )
+            executor = ExecutionCoordinator(exec_service, self._portfolio)
+
         self._engine = DecisionEngine(
             portfolio=self._portfolio,
             context_builder=ContextBuilder(self._adapter, self._memory),
