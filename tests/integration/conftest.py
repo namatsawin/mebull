@@ -38,4 +38,18 @@ async def clean_db():
     async with session_scope() as s:
         for t in _TABLES:
             await s.execute(text(f"TRUNCATE TABLE {t} CASCADE"))
+
+    # Seed the persistent portfolio identity most tests rely on (FK target).
+    from apm.config import get_settings
+    from apm.db.models import Portfolio
+
+    async with session_scope() as s:
+        s.add(
+            Portfolio(
+                id=get_settings().portfolio_id,
+                owner="test",
+                broker="Webull",
+                execution_mode="MOCK",
+            )
+        )
     yield
