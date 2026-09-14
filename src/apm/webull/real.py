@@ -70,6 +70,36 @@ def _first(d: dict, *keys: str, default: Any = None) -> Any:
     return default
 
 
+def _fopt(v: Any) -> float | None:
+    """Float or None (keeps optional greeks/IV empty rather than 0.0 when absent)."""
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_contract(underlying: str, r: dict) -> OptionContract | None:
+    """Parse one contract-metadata row from the option-contracts endpoint."""
+    try:
+        rt = str(_first(r, "option_type", "direction", default="CALL")).upper()
+        strike = _fopt(_first(r, "strike_price", "strike"))
+        expiry = str(_first(r, "expiration_date", "expire_date", "expiry", default=""))
+        if not strike or not expiry:
+            return None
+        return OptionContract(
+            underlying=underlying,
+            right=OptionRight.PUT if rt.startswith("P") else OptionRight.CALL,
+            strike=strike,
+            expiry=expiry,
+            symbol=_first(r, "symbol", "option_symbol"),
+            instrument_id=_first(r, "instrument_id"),
+        )
+    except Exception:  # noqa: BLE001 - skip malformed rows
+        return None
+
+
 def _f(v: Any, default: float = 0.0) -> float:
     try:
         return float(v)
@@ -401,49 +431,98 @@ class RealWebullAdapter:
         return order
 
     # --- options (single-leg) ------------------------------------------------
-    # ⚠️ LIVE-VERIFY (needs OPRA market-data subscription + a sandbox run): the option
-    # chain/snapshot/order field names below are best-effort per the Webull v3 option API.
+    # LIVE-VERIFIED with OPRA: contracts endpoint returns a top-level list of contract metadata;
+    # the option snapshot adds bid/ask/greeks/IV/OI. We fetch a near-dated, near-ATM slice and
+    # enrich it with a batched snapshot so the AI/rules get everything they need in one shot.
     async def get_option_chain(
-        self, underlying: str, *, expiry: str | None = None, right: OptionRight | None = None
+        self,
+        underlying: str,
+        *,
+        expiry: str | None = None,
+        right: OptionRight | None = None,
+        max_dte: int = 7,
+        strikes_each_side: int = 6,
     ) -> list[OptionContract]:
         await self._ensure()
+        underlying = underlying.upper()
 
-        def _call():
+        def _contracts():
             from webull.data.request.get_option_contracts_request import (
                 GetOptionContractsRequest,
             )
 
             req = GetOptionContractsRequest()
             req.set_category("US_OPTION")
-            req.set_underlying_symbols(underlying.upper())
+            req.set_underlying_symbols(underlying)
             if right is not None:
                 req.set_option_type(right.value)
             if expiry:
                 req.set_start_date(expiry)
                 req.set_end_date(expiry)
+            elif hasattr(req, "set_end_date"):
+                # Near-dated only (0DTE..max_dte) — keeps the payload small for intraday use.
+                req.set_end_date((dt.date.today() + dt.timedelta(days=max_dte)).isoformat())
             return self._api.get_response(req)
 
-        data = _json(await self._dispatch(_call))
-        rows = _first(data, "data", "contracts", default=[]) or []
-        out: list[OptionContract] = []
-        for r in rows:
-            rt = str(_first(r, "option_type", "direction", default="CALL")).upper()
-            out.append(
-                OptionContract(
-                    underlying=underlying.upper(),
-                    right=OptionRight.PUT if rt.startswith("P") else OptionRight.CALL,
-                    strike=_f(_first(r, "strike_price", "strike")),
-                    expiry=str(
-                        _first(r, "expire_date", "option_expire_date", "expiry", default="")
-                    ),
-                    symbol=_first(r, "symbol", "option_symbol", "instrument_id"),
-                    instrument_id=_first(r, "instrument_id"),
-                    last=_first(r, "last_price", "price", "close"),
-                    bid=_first(r, "bid_price", "bid"),
-                    ask=_first(r, "ask_price", "ask"),
-                )
+        data = _json(await self._dispatch(_contracts))
+        rows = data if isinstance(data, list) else _first(data, "data", "contracts", default=[])
+        rows = rows or []
+
+        # Narrow to the nearest expiry and strikes around the money before the snapshot call.
+        px = None
+        try:
+            q = await self.get_quote(underlying)
+            px = q.price
+        except Exception:  # noqa: BLE001 - underlying quote optional for filtering
+            px = None
+        contracts = [_parse_contract(underlying, r) for r in rows]
+        contracts = [c for c in contracts if c is not None]
+        if not contracts:
+            return []
+        nearest = min({c.expiry for c in contracts if c.expiry})
+        chosen_expiry = expiry or nearest
+        contracts = [c for c in contracts if c.expiry == chosen_expiry]
+        if px is not None:
+            contracts.sort(key=lambda c: abs(c.strike - px))
+            keep = strikes_each_side * (1 if right else 2)
+            contracts = contracts[: max(keep, 1)]
+
+        await self._enrich_option_snapshots(contracts)
+        return contracts
+
+    async def _enrich_option_snapshots(self, contracts: list[OptionContract]) -> None:
+        """Attach bid/ask/last/greeks/IV/OI from the OPRA option snapshot (batched)."""
+        syms = [c.symbol for c in contracts if c.symbol]
+        if not syms:
+            return
+
+        def _snap():
+            from webull.data.request.get_option_snapshot_request import (
+                GetOptionSnapshotRequest,
             )
-        return out
+
+            r = GetOptionSnapshotRequest()
+            r.set_symbols(",".join(syms))
+            r.set_category("US_OPTION")
+            return self._api.get_response(r)
+
+        data = _json(await self._dispatch(_snap))
+        rows = data if isinstance(data, list) else (_first(data, "data", default=[]) or [])
+        by_sym = {str(_first(r, "symbol", default="")): r for r in rows}
+        for c in contracts:
+            r = by_sym.get(c.symbol or "")
+            if not r:
+                continue
+            c.bid = _fopt(_first(r, "bid", "bid_price"))
+            c.ask = _fopt(_first(r, "ask", "ask_price"))
+            c.last = _fopt(_first(r, "price", "last_price", "close"))
+            c.delta = _fopt(_first(r, "delta"))
+            c.gamma = _fopt(_first(r, "gamma"))
+            c.theta = _fopt(_first(r, "theta"))
+            c.vega = _fopt(_first(r, "vega"))
+            c.iv = _fopt(_first(r, "imp_vol", "implied_volatility"))
+            c.open_interest = _fopt(_first(r, "open_interest"))
+            c.volume = _fopt(_first(r, "volume"))
 
     def _option_payload(self, req: OrderRequest) -> dict:
         leg = {

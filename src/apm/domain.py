@@ -142,6 +142,14 @@ class OptionContract(BaseModel):
     last: float | None = None
     bid: float | None = None
     ask: float | None = None
+    # Greeks + IV + liquidity (from the OPRA option snapshot). Used by the quant options rules.
+    delta: float | None = None
+    gamma: float | None = None
+    theta: float | None = None
+    vega: float | None = None
+    iv: float | None = None
+    open_interest: float | None = None
+    volume: float | None = None
 
     @property
     def mid(self) -> float | None:
