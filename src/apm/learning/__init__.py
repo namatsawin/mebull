@@ -4,3 +4,7 @@ Trade evaluation, counterfactual evaluation (what rejected candidates / WAITs wo
 have done), metrics (spec §24), pattern detection, and knowledge updates. Separates
 good decision from good outcome (spec §23); avoids overfitting (spec §74).
 """
+
+from apm.learning.evaluator import LearningService
+
+__all__ = ["LearningService"]
