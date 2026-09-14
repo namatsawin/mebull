@@ -49,7 +49,9 @@ class ContextBuilder:
         if symbols:
             try:
                 for q in await self._adapter.get_quotes(symbols):
-                    quotes.append(ContextQuote(symbol=q.symbol, price=q.price))
+                    quotes.append(
+                        ContextQuote(symbol=q.symbol, price=q.price, change_pct=q.change_pct)
+                    )
             except Exception as exc:  # noqa: BLE001 - market data may be down/unsubscribed
                 # Degrade gracefully (spec §37): keep reasoning/journaling; the Safety Guard
                 # blocks new orders when market data is unavailable.

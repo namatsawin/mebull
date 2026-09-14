@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import math
 
 from apm.domain import (
     AccountBalance,
@@ -43,6 +44,7 @@ class MockWebullAdapter:
         account_id: str = "MOCK-ACCOUNT",
         starting_cash: float = 100_000.0,
         now: dt.datetime | None = None,
+        volatile: bool = False,
     ) -> None:
         self.account_id = account_id
         self._cash = starting_cash
@@ -51,14 +53,30 @@ class MockWebullAdapter:
         self._prices: dict[str, float] = {}
         # Default to real UTC now so freshness/staleness checks behave against wall-clock.
         self._now = now or dt.datetime.now(dt.UTC)
+        # Practice mode: prices oscillate over time so the AI sees real signals and trades.
+        # Off by default so tests get stable prices.
+        self._volatile = volatile
+        self._step = 0
 
     # --- test/sim controls ---------------------------------------------------
     def set_quote(self, symbol: str, price: float) -> None:
         self._prices[symbol.upper()] = price
         self._maybe_fill_open_orders(symbol.upper())
 
-    def _price(self, symbol: str) -> float:
+    def _base(self, symbol: str) -> float:
         return self._prices.setdefault(symbol.upper(), round(_seed_price(symbol), 2))
+
+    def _drifted(self, symbol: str, step: int) -> float:
+        """Price at a given step. In volatile mode it oscillates ~±6% around the base with a
+        per-symbol phase, giving deterministic momentum for practice trading."""
+        base = self._base(symbol)
+        if not self._volatile:
+            return base
+        phase = (int(hashlib.sha256(symbol.encode()).hexdigest(), 16) % 628) / 100.0
+        return round(base * (1 + 0.06 * math.sin(0.5 * step + phase)), 2)
+
+    def _price(self, symbol: str) -> float:
+        return self._drifted(symbol, self._step)
 
     # --- adapter interface ---------------------------------------------------
     async def authenticate(self) -> None:
@@ -98,16 +116,24 @@ class MockWebullAdapter:
 
     async def get_quote(self, symbol: str) -> Quote:
         px = self._price(symbol)
+        change_pct = None
+        if self._volatile:
+            prev = self._drifted(symbol, self._step - 1)
+            change_pct = round((px / prev - 1) * 100, 2) if prev else None
         return Quote(
             symbol=symbol.upper(),
             price=px,
             bid=round(px * 0.999, 2),
             ask=round(px * 1.001, 2),
             volume=1_000_000,
+            change_pct=change_pct,
             as_of=self._now,
         )
 
     async def get_quotes(self, symbols: list[str]) -> list[Quote]:
+        # Advance the simulated clock once per batch (i.e. once per decision cycle).
+        if self._volatile:
+            self._step += 1
         return [await self.get_quote(s) for s in symbols]
 
     async def get_historical_bars(

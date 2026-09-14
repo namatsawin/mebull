@@ -106,6 +106,7 @@ class Quote(BaseModel):
     bid: float | None = None
     ask: float | None = None
     volume: float | None = None
+    change_pct: float | None = None
     as_of: dt.datetime
 
 

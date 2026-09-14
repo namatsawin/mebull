@@ -87,7 +87,8 @@ class JournalService:
             s.add(row)
             await s.flush()  # get row.id
 
-            for symbol in decision.opportunities_considered:
+            for raw_symbol in decision.opportunities_considered:
+                symbol = (raw_symbol or "")[:255]  # free-form; keep within column width
                 chosen = symbol == decision.selected_opportunity
                 price = candidate_prices.get(symbol)
                 rej = rejected.get(symbol)

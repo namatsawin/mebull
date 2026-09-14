@@ -16,7 +16,8 @@ def build_adapter(settings: Settings | None = None) -> WebullAdapter:
     settings = settings or get_settings()
 
     if settings.execution_mode is ExecutionMode.MOCK:
-        return MockWebullAdapter(account_id=f"MOCK-{settings.portfolio_id}")
+        # Practice mode: volatile prices so the AI sees signals and actually trades.
+        return MockWebullAdapter(account_id=f"MOCK-{settings.portfolio_id}", volatile=True)
 
     # SANDBOX / REAL both use the real SDK adapter.
     missing = [

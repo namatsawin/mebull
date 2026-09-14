@@ -140,7 +140,7 @@ class DecisionCandidate(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     decision_id: Mapped[str] = mapped_column(ForeignKey("decision.id"), index=True)
-    symbol: Mapped[str] = mapped_column(String(32))
+    symbol: Mapped[str] = mapped_column(String(255))
     action: Mapped[str | None] = mapped_column(String(16), nullable=True)
     chosen: Mapped[bool] = mapped_column(Boolean, default=False)
     reason_for_rejection: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -297,7 +297,7 @@ class Counterfactual(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     decision_id: Mapped[str] = mapped_column(ForeignKey("decision.id"), index=True)
-    candidate_symbol: Mapped[str] = mapped_column(String(32))
+    candidate_symbol: Mapped[str] = mapped_column(String(255))
     candidate_action: Mapped[str | None] = mapped_column(String(16), nullable=True)
     chosen: Mapped[bool] = mapped_column(Boolean, default=False)
     decision_time_price: Mapped[float | None] = mapped_column(Float, nullable=True)
