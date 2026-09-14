@@ -19,28 +19,32 @@ from __future__ import annotations
 import statistics as st
 import sys
 
-DAYS = 60
 WARMUP = 40
 MIN_N_LEAD = 30
+# yfinance history caps by interval: 1m -> 7d, 2-30m -> 60d, 1h -> 730d.
+_PERIOD = {"1m": "7d", "2m": "60d", "5m": "60d", "15m": "60d", "30m": "60d", "1h": "730d"}
 
 
 def _args(argv):
-    syms, barrier, horizon = [], 0.8, 12
+    syms, barrier, horizon, interval = [], 0.8, 12, "5m"
     it = iter(argv)
     for a in it:
         if a == "--barrier":
             barrier = float(next(it))
         elif a == "--horizon":
             horizon = int(next(it))
+        elif a == "--interval":
+            interval = next(it)
         elif not a.startswith("-"):
             syms.append(a.upper())
-    return syms, barrier, horizon
+    return syms, barrier, horizon, interval
 
 
-def _fetch(symbol):
+def _fetch(symbol, interval="5m"):
     import yfinance as yf
 
-    df = yf.Ticker(symbol).history(period=f"{DAYS}d", interval="5m", auto_adjust=True)
+    period = _PERIOD.get(interval, "60d")
+    df = yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=True)
     if df.empty:
         return None
     return (
@@ -222,8 +226,8 @@ def _agg(rs):
     return len(rs), round(win, 1), round(sum(rs) / len(rs), 3), round(sum(rs), 1)
 
 
-def analyze(sym, barrier, horizon):
-    data = _fetch(sym)
+def analyze(sym, barrier, horizon, interval="5m"):
+    data = _fetch(sym, interval)
     if data is None:
         return None, []
     o, h, low, c, v, days = data
@@ -252,14 +256,16 @@ def analyze(sym, barrier, horizon):
 
 
 def main():
-    syms, barrier, horizon = _args(sys.argv[1:])
+    syms, barrier, horizon, interval = _args(sys.argv[1:])
     if not syms:
         print("usage: uv run python scripts/find_edge.py TICKER [...] "
-              "[--barrier 0.8] [--horizon 12]")
+              "[--barrier 0.8] [--horizon 12] [--interval 5m|1m|15m|1h]")
         return
+    bar_min = {"1m": 1, "2m": 2, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
+    win_days = _PERIOD.get(interval, "60d")
     all_rows, base_by = [], {}
     for s in syms:
-        base_avg, rows = analyze(s, barrier, horizon)
+        base_avg, rows = analyze(s, barrier, horizon, interval)
         if base_avg is None:
             print(f"{s}: no data (bad ticker or Yahoo down)")
             continue
@@ -268,7 +274,7 @@ def main():
 
     if not all_rows:
         return
-    hz = horizon * 5
+    hz = horizon * bar_min
     # --- ROLLUP: per strategy across all tickers (anti-overfit view) ---
     strat = {}
     for r in all_rows:
@@ -277,7 +283,11 @@ def main():
         s["vs"].append(r["vs"])
         s["leads"] += 1 if r["lead"] else 0
         s["stocks"] += 1
-    print(f"\n=== STRATEGY ROLLUP (across {len(base_by)} tickers, ±{barrier}% / {hz}m) ===")
+    print(f"\n=== STRATEGY ROLLUP ({len(base_by)} tickers, {interval} bars / {win_days}, "
+          f"±{barrier}% / {hz}m horizon) ===")
+    if interval == "1m":
+        print("!! 1m data is capped at ~7 days by Yahoo → SMALL sample, high false-positive "
+              "risk. Treat everything as very tentative.")
     print(f"{'Strategy':22s}{'Trades':>7s}{'AvgEdge%':>9s}{'Leads':>7s}  robustness")
     print("-" * 60)
     for name in sorted(strat, key=lambda k: sum(strat[k]["vs"]) / len(strat[k]["vs"]),
