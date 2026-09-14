@@ -42,6 +42,7 @@ dev = [
 
 [project.scripts]
 apm = "apm.orchestrator.main:run"
+apm-killswitch = "apm.tools.killswitch:main"
 
 [build-system]
 requires = ["hatchling"]

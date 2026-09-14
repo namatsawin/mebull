@@ -62,11 +62,21 @@ Migrations run in-process at startup (`orchestrator/migrate.py`). To add tables:
 models under `apm/db/models` (import them so they register on `Base.metadata`), then
 `uv run alembic revision --autogenerate -m "..."`.
 
-## Milestones (status in tests/PRs)
-M0 scaffold ✅ · M1 Webull read-only · M2 portfolio+reconcile · M3 journal+memory ·
-M4 Claude engine · M5 events+scheduler (analysis-only) · M6 Safety Guard · M7 sandbox
-execution · M8 learning+research · M9 REAL (flag-gated). Build order per spec §69 / App. C:
-infrastructure first, real execution last.
+## Milestones (all implemented)
+M0 scaffold ✅ · M1 Webull adapter (Protocol+Mock+Real) ✅ · M2 portfolio+reconcile ✅ ·
+M3 journal+memory ✅ · M4 Claude engine ✅ · M5 events+scheduler ✅ · M6 Safety Guard+kill
+switch ✅ · M7 execution (guarded lifecycle) ✅ · M8 learning+backtest+strategy/experiment/
+reviews ✅ · M9 REAL flag-gated ✅. Build order per spec §69 / App. C: infrastructure first,
+real execution last. **REAL is still gated on the Phase 0 checklist + live sandbox
+verification of Webull response/order field mappings** (see docs/PHASE0_WEBULL_CHECKLIST and
+the LIVE-VERIFICATION note in src/apm/webull/real.py).
+
+## Enabling REAL (do not skip)
+1. Complete docs/PHASE0_WEBULL_CHECKLIST against the live account.
+2. Run against SANDBOX first (`APM_EXECUTION_MODE=SANDBOX`, real WEBULL_* creds) and verify
+   the order lifecycle + reconciliation; fix any `_first(...)` field mappings in real.py.
+3. Only then set `APM_EXECUTION_MODE=REAL` + `APM_TRADING_ENABLED=true`. `apm-killswitch on`
+   halts all new orders instantly.
 
 ## Conventions
 - Reference the spec section (`spec §N`) in docstrings when implementing a requirement.

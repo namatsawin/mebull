@@ -37,10 +37,24 @@ uv run ruff check . && uv run mypy          # lint + types
 ## Kill switch / emergency stop (spec §36)
 Two independent halves; either one off ⇒ NO real orders (analysis/research continue):
 1. **Env:** `APM_TRADING_ENABLED=false` (restart app to apply).
-2. **DB-backed flag:** enforced at authorize-time by the Safety Guard (M6).
+2. **DB-backed flag:** enforced at authorize-time by the Safety Guard (M6). Toggle live
+   without a redeploy:
+   ```bash
+   docker compose exec app apm-killswitch status
+   docker compose exec app apm-killswitch on  --note "why"   # blocks ALL new orders now
+   docker compose exec app apm-killswitch off
+   ```
 
-To fully halt real trading right now: set `APM_TRADING_ENABLED=false` and
-`APM_EXECUTION_MODE=MOCK`, then `docker compose up -d app`.
+To fully halt real trading right now: `apm-killswitch on`, or set `APM_TRADING_ENABLED=false`
+and `APM_EXECUTION_MODE=MOCK`, then `docker compose up -d app`.
+
+## Enabling REAL execution (final gate, spec §67)
+1. Complete `docs/PHASE0_WEBULL_CHECKLIST.md` against the live account.
+2. Set real `WEBULL_*` creds and run `APM_EXECUTION_MODE=SANDBOX` first; verify preview ->
+   place -> fill -> cancel -> reconcile end to end, and correct any response/order field
+   mappings flagged in `src/apm/webull/real.py`.
+3. Only then: `APM_EXECUTION_MODE=REAL` + `APM_TRADING_ENABLED=true`, start with minimal
+   capital. The Safety Guard blocks REAL unless both are set and the kill switch is clear.
 
 ## Execution modes (spec §67)
 `APM_EXECUTION_MODE`: `MOCK` (no broker) → `SANDBOX` (Webull sandbox, no capital) →
