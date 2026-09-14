@@ -67,16 +67,20 @@ class MockWebullAdapter:
         return self._prices.setdefault(symbol.upper(), round(_seed_price(symbol), 2))
 
     def _drifted(self, symbol: str, step: int) -> float:
-        """Price at a given step. In volatile mode each symbol gets a deterministic directional
-        trend plus an oscillation, so practice shows clear momentum the AI can act on."""
+        """Price at a given step. In volatile mode a *shared* market regime drives all symbols
+        together (corroborated breadth — the clean, tradeable signal a disciplined PM will act
+        on), with a small per-symbol wiggle on top. The regime slowly swings risk-on/risk-off so
+        practice sees both entries and profitable exits."""
         base = self._base(symbol)
         if not self._volatile:
             return base
         h = int(hashlib.sha256(symbol.encode()).hexdigest(), 16)
         phase = (h % 628) / 100.0
-        trend = ((h >> 8) % 5 - 2) * 0.008  # per-symbol drift: -1.6%..+1.6% per step
-        osc = 0.05 * math.sin(0.6 * step + phase)
-        return round(max(1.0, base * (1 + trend * step + osc)), 2)
+        # Shared regime: a broad risk-on ramp that rolls over — same sign for every symbol, so
+        # SPY/QQQ/IWM corroborate each other instead of diverging.
+        market = 0.035 * math.sin(0.35 * step)  # ±3.5% market factor, all names together
+        idio = 0.01 * math.sin(0.6 * step + phase)  # ±1% idiosyncratic wiggle
+        return round(max(1.0, base * (1 + market + idio)), 2)
 
     def _price(self, symbol: str) -> float:
         return self._drifted(symbol, self._step)
