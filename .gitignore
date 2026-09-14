@@ -36,3 +36,6 @@ pgdata/
 .idea/
 .vscode/
 .DS_Store
+
+# Webull OpenAPI access token (secret) — never commit
+conf/
