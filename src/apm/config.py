@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     webull_app_secret: SecretStr | None = Field(default=None, alias="WEBULL_APP_SECRET")
     webull_account_id: str | None = Field(default=None, alias="WEBULL_ACCOUNT_ID")
     webull_region: str = Field(default="us", alias="WEBULL_REGION")
+    # Traded-market category for quotes/orders — the market of the SYMBOLS, not the account
+    # region (a TH account trading SPY still uses US_STOCK). US_STOCK | US_ETF | HK_STOCK ...
+    webull_market_category: str = Field(default="US_STOCK", alias="WEBULL_MARKET_CATEGORY")
 
     # --- Observability -------------------------------------------------------
     log_level: str = "INFO"
@@ -103,6 +106,7 @@ class Settings(BaseSettings):
             "webull_app_secret": mark(self.webull_app_secret),
             "webull_account_id": self.webull_account_id or "***unset***",
             "webull_region": self.webull_region,
+            "webull_market_category": self.webull_market_category,
             "database_url": _redact_url(self.database_url),
             "watchlist": self.watchlist_symbols,
             "log_level": self.log_level,

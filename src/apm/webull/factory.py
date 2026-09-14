@@ -39,4 +39,5 @@ def build_adapter(settings: Settings | None = None) -> WebullAdapter:
         app_secret=settings.webull_app_secret.get_secret_value(),  # type: ignore[union-attr]
         region=settings.webull_region,
         account_id=settings.webull_account_id,
+        market_category=settings.webull_market_category,
     )

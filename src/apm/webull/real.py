@@ -79,10 +79,15 @@ class RealWebullAdapter:
         app_secret: str,
         region: str,
         account_id: str | None,
+        market_category: str = "US_STOCK",
     ) -> None:
         self._app_key = app_key
         self._app_secret = app_secret
-        self._region = region.upper()
+        # Region id must be lowercase for the SDK endpoint resolver (e.g. "th", "us").
+        self._region = region.lower()
+        # Traded-market category (e.g. US_STOCK/US_ETF) — this is the market of the SYMBOLS,
+        # not the account region. A Webull TH account trading SPY/QQQ still uses US_STOCK.
+        self._market_category = market_category.upper()
         self._account_id = account_id
         self._api = None  # webull ApiClient
         self._account = None  # AccountV2
@@ -98,11 +103,15 @@ class RealWebullAdapter:
     def _build_clients(self) -> None:
         # Imported lazily so the core system runs without the optional SDK installed.
         from webull.core.client import ApiClient
+        from webull.core.http.initializer.token.token_manager import TokenManager
         from webull.data.quotes.market_data import MarketData
         from webull.trade.trade.v2.account_info_v2 import AccountV2
         from webull.trade.trade.v3.order_operation_v3 import OrderOperationV3
 
         self._api = ApiClient(self._app_key, self._app_secret, self._region)
+        # Obtain + attach the x-access-token (signed with app_key/secret). Cached to a local
+        # file and refreshed automatically by the SDK on subsequent runs.
+        TokenManager().init_token(self._api)
         self._account = AccountV2(self._api)
         self._orders = OrderOperationV3(self._api)
         self._market = MarketData(self._api)
@@ -121,7 +130,7 @@ class RealWebullAdapter:
 
     @property
     def _category(self) -> str:
-        return f"{self._region}_STOCK"
+        return self._market_category
 
     # --- reads ---------------------------------------------------------------
     async def get_account_balance(self) -> AccountBalance:
@@ -261,7 +270,7 @@ class RealWebullAdapter:
             "client_order_id": req.client_order_id,
             "symbol": req.symbol.upper(),
             "instrument_type": instrument,
-            "market": self._region,
+            "market": self._market_category.split("_")[0],  # e.g. "US" from "US_STOCK"
             "side": req.side.value,
             "order_type": req.order_type.value,
             "quantity": str(req.quantity),
