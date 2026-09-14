@@ -5,3 +5,19 @@ execution call routes through ``SafetyGuard.authorize(...)``. Enforces the §35 
 the kill switch (spec §36), idempotency (spec §33), stale-state and broker-mismatch
 blocking, and emergency stop.
 """
+
+from apm.safety.guard import (
+    Authorization,
+    AuthorizationContext,
+    SafetyGuard,
+    SafetyViolation,
+)
+from apm.safety.killswitch import KillSwitch
+
+__all__ = [
+    "SafetyGuard",
+    "SafetyViolation",
+    "Authorization",
+    "AuthorizationContext",
+    "KillSwitch",
+]
