@@ -46,7 +46,12 @@ These are the gate to real money. See `docs/PHASE0_WEBULL_CHECKLIST.md`.
 10. ~~Market-hours guard~~ ✅ **DONE** — `APM_MARKET_HOURS_ONLY=true` (default) skips cycles
     when the US market is closed (weekends/holidays/after-hours, DST-aware);
     `src/apm/marketdata/hours.py`. Update the holiday list annually.
-11. Backtest realism (point-in-time data feed, corporate actions, survivorship).
+11. ~~Options (single-leg)~~ ✅ **DONE (M10)** — CALL/PUT with strike/expiry through the full
+    pipeline (chain → priced LIMIT order → guard → journal). Mock fully tested; Real adapter
+    written (best-effort field mapping). To use live: subscribe **OPRA** + set
+    `APM_OPTIONS_ENABLED=true`. Caveats: single-leg only (no spreads yet); trade-book P&L is
+    per-contract (not ×100 yet); Real option field mappings need a sandbox verify.
+12. Backtest realism (point-in-time data feed, corporate actions, survivorship).
 12. Retry/backoff on Webull + Anthropic calls; options order legs; CI (GitHub Actions);
     fill in `tests/webull_sandbox/` against the live sandbox.
 

@@ -26,6 +26,9 @@ class DecisionContext(BaseModel):
 
     watchlist: list[str] = Field(default_factory=list)
     quotes: list[ContextQuote] = Field(default_factory=list)
+    # Affordable option contracts per underlying (only when options are enabled): compact
+    # {symbol: [{right, strike, expiry, mid, cost}]} so the AI can pick a contract it can pay for.
+    option_chains: dict[str, list[dict]] = Field(default_factory=dict)
     discovery: list[dict] = Field(default_factory=list)
     market_snapshot: dict = Field(default_factory=dict)
 

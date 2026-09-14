@@ -56,6 +56,10 @@ class ContextBuilder:
                 market_snapshot["market_data_error"] = str(exc)
                 log.warning("context.quotes_unavailable", error=str(exc))
 
+        option_chains: dict[str, list[dict]] = {}
+        if settings.options_enabled:
+            option_chains = await self._affordable_options(watchlist, state.buying_power)
+
         discovery: list[dict] = []
         if self._discovery is not None:
             discovery = await self._discovery.scan(symbols)
@@ -68,6 +72,7 @@ class ContextBuilder:
             buying_power=state.buying_power,
             watchlist=watchlist,
             quotes=quotes,
+            option_chains=option_chains,
             market_snapshot=market_snapshot,
             discovery=discovery,
             recent_decisions=await self._recent_decisions(state.portfolio_id),
@@ -75,6 +80,34 @@ class ContextBuilder:
             known_failures=await self._memory.recall(category="FAILURE", limit=10),
             scorecard=await self._learning.build_scorecard(),
         )
+
+    async def _affordable_options(
+        self, symbols: list[str], buying_power: float, per_symbol: int = 6
+    ) -> dict[str, list[dict]]:
+        """A compact slice of option contracts the account can actually afford, per symbol.
+        Degrades gracefully if option data is unavailable/unsubscribed (403)."""
+        out: dict[str, list[dict]] = {}
+        for sym in symbols:
+            try:
+                chain = await self._adapter.get_option_chain(sym)
+            except Exception as exc:  # noqa: BLE001 - option data may be down/unsubscribed
+                log.warning("context.options_unavailable", symbol=sym, error=str(exc))
+                continue
+            affordable = [
+                {
+                    "right": c.right.value,
+                    "strike": c.strike,
+                    "expiry": c.expiry,
+                    "mid": c.mid,
+                    "cost": c.contract_cost,
+                }
+                for c in chain
+                if c.contract_cost is not None and c.contract_cost <= buying_power
+            ]
+            affordable.sort(key=lambda x: x["cost"])
+            if affordable:
+                out[sym] = affordable[:per_symbol]
+        return out
 
     async def _recent_decisions(self, portfolio_id: str, limit: int = 10) -> list[dict]:
         async with session_scope() as s:

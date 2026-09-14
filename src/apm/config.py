@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # Skip cycles when the US market is closed (weekends/holidays/after-hours). The biggest
     # cost saver. Set false for local dev/testing so the loop runs any time.
     market_hours_only: bool = True
+    # Include an (affordable) option-chain slice per watchlist symbol in Claude's context so
+    # it can trade options — needs the Webull OPRA option-data subscription. Off by default
+    # (would 403 every cycle without OPRA).
+    options_enabled: bool = False
 
     # --- Database ------------------------------------------------------------
     database_url: str = "postgresql+asyncpg://apm:apm@localhost:5432/apm"
@@ -99,6 +103,7 @@ class Settings(BaseSettings):
             "execution_mode": self.execution_mode.value,
             "decision_interval_seconds": self.decision_interval_seconds,
             "market_hours_only": self.market_hours_only,
+            "options_enabled": self.options_enabled,
             "claude_provider": self.claude_provider.value,
             "claude_model": self.claude_model,
             "anthropic_api_key": mark(self.anthropic_api_key),

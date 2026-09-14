@@ -219,6 +219,30 @@
       "default": null,
       "title": "Quantity"
     },
+    "option_strike": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Option Strike"
+    },
+    "option_expiry": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Option Expiry"
+    },
     "thesis": {
       "anyOf": [
         {

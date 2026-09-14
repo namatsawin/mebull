@@ -8,7 +8,8 @@ For step-by-step flows see [LIFECYCLE.md](LIFECYCLE.md). For the database see
 
 ## 1. What is this?
 
-One AI (Claude) that manages **one** real stock portfolio on Webull, by itself.
+One AI (Claude) that manages **one** real multi-asset portfolio on Webull — **stocks/ETFs
+and options** — by itself.
 
 You give it a portfolio (and maybe a watchlist). You do **not** tell it what to buy, when
 to buy, how much, or which strategy. The AI decides — or it decides to **WAIT** and do
@@ -133,6 +134,12 @@ EXPERIMENT try a new idea in a controlled way
 
 `WAIT` is a **first-class** answer, not a failure. The system even records what Claude
 *considered but rejected*, so later it can check: "was waiting the right call?"
+
+**Instruments.** Claude can trade **stocks/ETFs** and **single-leg options** (CALL/PUT). For
+an option it picks an underlying + expiry + strike; options are LIMIT-only, BUY/SELL only, and
+priced ×100 per contract — so a small account can afford an option where a whole share is too
+expensive. Options require the Webull OPRA data subscription and `APM_OPTIONS_ENABLED=true`
+(off by default); when on, Claude sees an *affordable* option-chain slice per watchlist symbol.
 
 ---
 
