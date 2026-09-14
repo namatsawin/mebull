@@ -43,8 +43,9 @@ These are the gate to real money. See `docs/PHASE0_WEBULL_CHECKLIST.md`.
 9. **Claude cost/usage monitoring** (spec §60).
 
 ## Nice-to-have — Tier 3
-10. **Market-hours guard** — the loop runs 24/7; ~65% of token spend is wasted overnight/
-    weekends. Add a check to skip cycles when the market is closed (biggest cost win).
+10. ~~Market-hours guard~~ ✅ **DONE** — `APM_MARKET_HOURS_ONLY=true` (default) skips cycles
+    when the US market is closed (weekends/holidays/after-hours, DST-aware);
+    `src/apm/marketdata/hours.py`. Update the holiday list annually.
 11. Backtest realism (point-in-time data feed, corporate actions, survivorship).
 12. Retry/backoff on Webull + Anthropic calls; options order legs; CI (GitHub Actions);
     fill in `tests/webull_sandbox/` against the live sandbox.
@@ -71,5 +72,5 @@ account; fail closed when unsure.
 
 ## Suggested next move
 If you have creds → **Tier 1** (SANDBOX-verify the adapter + provider).
-If not → **Tier 2 market discovery** (highest-value, no creds), and the **market-hours
-guard** from Tier 3 (cheap, ~65% cost cut).
+If not → **Tier 2 market discovery** (highest-value, no creds). The market-hours guard that
+cuts ~65% of cost is already in place (`APM_MARKET_HOURS_ONLY`).

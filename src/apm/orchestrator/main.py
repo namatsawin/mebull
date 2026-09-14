@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
 import signal
 import time
 
@@ -19,6 +20,7 @@ import uvicorn
 from apm import __version__
 from apm.config import get_settings
 from apm.db import ping
+from apm.marketdata import is_market_open
 from apm.observability import configure_logging, get_logger
 from apm.orchestrator.app import TradingApp
 from apm.orchestrator.health import create_health_app
@@ -52,14 +54,24 @@ def seconds_to_next_boundary(interval: float, now: float) -> float:
     return interval - rem if rem > 0 else interval
 
 
-async def _decision_loop(app: TradingApp, stop: asyncio.Event, interval: float) -> None:
-    """Run one decision cycle immediately, then on every wall-clock boundary until stopped."""
+async def _decision_loop(
+    app: TradingApp, stop: asyncio.Event, interval: float, *, market_hours_only: bool
+) -> None:
+    """Run one decision cycle on every wall-clock boundary until stopped.
+
+    When ``market_hours_only`` is set, cycles are skipped while the US market is closed
+    (weekends/holidays/after-hours) — the loop still wakes each boundary but does nothing,
+    which costs no tokens.
+    """
     while not stop.is_set():
-        try:
-            decision = await app.run_once("PERIODIC")
-            log.info("loop.cycle", decision_type=decision.decision_type.value)
-        except Exception as exc:  # noqa: BLE001 - a bad cycle must not kill the loop
-            log.error("loop.cycle_failed", error=str(exc))
+        if market_hours_only and not is_market_open(dt.datetime.now(dt.UTC)):
+            log.info("loop.market_closed")
+        else:
+            try:
+                decision = await app.run_once("PERIODIC")
+                log.info("loop.cycle", decision_type=decision.decision_type.value)
+            except Exception as exc:  # noqa: BLE001 - a bad cycle must not kill the loop
+                log.error("loop.cycle_failed", error=str(exc))
         if stop.is_set():
             break
         # Sleep until the next clock-aligned boundary, but wake immediately on shutdown.
@@ -104,12 +116,18 @@ async def async_main() -> None:
 
     health_task = asyncio.create_task(_serve_health(stop))
     loop_task = asyncio.create_task(
-        _decision_loop(app, stop, settings.decision_interval_seconds)
+        _decision_loop(
+            app,
+            stop,
+            settings.decision_interval_seconds,
+            market_hours_only=settings.market_hours_only,
+        )
     )
     log.info(
         "startup.complete",
         health_port=settings.health_port,
         interval_seconds=settings.decision_interval_seconds,
+        market_hours_only=settings.market_hours_only,
     )
 
     await stop.wait()

@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # The AI runs one full decision cycle every N seconds and decides freely each time
     # (no meaningful-event gate). Mind the Anthropic prompt-cache TTL / token cost.
     decision_interval_seconds: int = 300
+    # Skip cycles when the US market is closed (weekends/holidays/after-hours). The biggest
+    # cost saver. Set false for local dev/testing so the loop runs any time.
+    market_hours_only: bool = True
 
     # --- Database ------------------------------------------------------------
     database_url: str = "postgresql+asyncpg://apm:apm@localhost:5432/apm"
@@ -92,6 +95,7 @@ class Settings(BaseSettings):
             "trading_enabled": self.trading_enabled,
             "execution_mode": self.execution_mode.value,
             "decision_interval_seconds": self.decision_interval_seconds,
+            "market_hours_only": self.market_hours_only,
             "claude_provider": self.claude_provider.value,
             "claude_model": self.claude_model,
             "anthropic_api_key": mark(self.anthropic_api_key),

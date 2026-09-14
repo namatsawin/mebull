@@ -166,9 +166,11 @@ overruns a boundary, the missed boundaries are coalesced (it targets the next on
 runs back-to-back). Every cycle is a full, free decision (§3) plus a counterfactual update.
 Lower the number to react faster (costs more tokens); raise it to save money.
 
-> Note: this is a simple fixed interval — it does not know about market open/close hours or
-> holidays. If you only want it active during market hours, gate it outside the app (e.g.
-> start/stop the container on a schedule) or add a market-calendar check later.
+**Market-hours guard.** With `APM_MARKET_HOURS_ONLY=true` (default) the loop skips cycles
+when the US market is closed — weekdays 09:30–16:00 ET only, DST-aware, holidays excluded
+(`src/apm/marketdata/hours.py`). It still wakes each boundary but does nothing (no tokens
+spent), cutting ~65% of cost vs running 24/7. Set it `false` for local testing so cycles run
+any time. Half-days (early 13:00 closes) run the full session; update the holiday list yearly.
 
 ---
 
