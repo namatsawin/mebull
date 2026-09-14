@@ -4,9 +4,22 @@ Read this first. It orients you fast and encodes the non-negotiable rules. Picki
 project up? Also read `docs/STATUS.md` (what's done vs stubbed + next steps).
 
 ## What this is
-An **Autonomous AI Portfolio Manager**: one persistent Claude identity managing one
-**real** Webull portfolio, behind an infrastructure-level Safety Guard. Built from the
-user's spec v2.0 (referenced as §N throughout the code). See `docs/ARCHITECTURE.md`.
+An **Autonomous AI trader** managing one **real** Webull portfolio, behind an
+infrastructure-level Safety Guard. Built from the user's spec v2.0 (referenced as §N
+throughout the code). See `docs/ARCHITECTURE.md`.
+
+Two **strategy modes** (`APM_STRATEGY_MODE`), same infra/guard/journal underneath:
+- **`ai`** — Claude decides every cycle (flexible; ~1 API call/cycle).
+- **`quant`** (the "B" architecture) — a **deterministic rules engine** decides every cycle
+  with NO AI in the hot path; a lightweight **AI supervisor** runs a few times/day
+  (`APM_SUPERVISOR_INTERVAL_MINUTES`) to set the `SupervisorPolicy` (regime, risk multiplier,
+  vetoes) the rules read. Cheap + reproducible. See `docs/STRATEGY_MODES.md`.
+
+Current live config is an **intraday day-trader** (`APM_TRADING_STYLE=daytrade`,
+`APM_INTRADAY_ONLY=true`): positions are closed the same day; the loop force-flattens all
+positions (equities AND options) within `APM_FLATTEN_BEFORE_CLOSE_MINUTES` of the close.
+**Options** (Model B: single-leg long calls/puts) are supported when `APM_OPTIONS_ENABLED=true`
+(needs the Webull OPRA subscription). Every cycle's full reasoning is persisted to `audit_log`.
 
 ## Locked decisions (do not relitigate without the user)
 - **Language: Python 3.12**, `asyncio`. Chosen because Webull's official SDK is Python/Java
@@ -45,6 +58,8 @@ src/apm/
   orchestrator/       main.py (entrypoint), health.py, migrate.py
   webull/ marketdata/ portfolio/ reconcile/ journal/ memory/ decision/
   discovery/ safety/ execution/ learning/ research/
+  strategy/           quant "B": rules.py (deterministic decider), policy.py, options.py
+  supervisor/         AI supervisor (sets SupervisorPolicy a few times/day, quant mode)
 migrations/           Alembic (async env.py); models register on Base.metadata
 claude/               system-prompt.md, decision-schema.json, prompts/
 docs/                 ARCHITECTURE / RUNBOOK / PHASE0_WEBULL_CHECKLIST
@@ -67,10 +82,15 @@ models under `apm/db/models` (import them so they register on `Base.metadata`), 
 M0 scaffold ✅ · M1 Webull adapter (Protocol+Mock+Real) ✅ · M2 portfolio+reconcile ✅ ·
 M3 journal+memory ✅ · M4 Claude engine ✅ · M5 interval decision loop ✅ · M6 Safety Guard+kill
 switch ✅ · M7 execution (guarded lifecycle) ✅ · M8 learning+backtest+strategy/experiment/
-reviews ✅ · M9 REAL flag-gated ✅. Build order per spec §69 / App. C: infrastructure first,
-real execution last. **REAL is still gated on the Phase 0 checklist + live sandbox
-verification of Webull response/order field mappings** (see docs/PHASE0_WEBULL_CHECKLIST and
-the LIVE-VERIFICATION note in src/apm/webull/real.py).
+reviews ✅ · M9 REAL flag-gated ✅ · M10 options (Model B) ✅ · M11 quant mode (deterministic
+rules + AI supervisor, "B") ✅.
+
+**REAL is LIVE and verified** against the account: equity order path (EQUITY +
+`support_trading_session`), snapshot-derived technicals + breadth (the bars endpoint 404s for
+this entitlement), and the v3 **option order path** (top strategy fields + a leg keyed by
+underlying + option_type/strike/expiry; `position_intent` BUY_TO_OPEN/SELL_TO_CLOSE). Options
+need the **OPRA** subscription (chain/greeks/IV via `get_option_snapshot`). Verify live with
+`uv run python scripts/verify_real_orderpath.py` (read-only previews).
 
 ## Enabling REAL (do not skip)
 1. Complete docs/PHASE0_WEBULL_CHECKLIST against the live account.

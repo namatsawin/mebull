@@ -3,35 +3,41 @@
 For the next person (or AI) picking this up. Read `CLAUDE.md` first (rules + layout), then
 `docs/HOW_IT_WORKS.md`. This file = what's done, what's stubbed, and what to do next.
 
-_Last updated: 2026-09-14._
+_Last updated: 2026-09-15._
 
 ## TL;DR
-The full system (M0–M9) is **built, tested (71 tests), and runs in Docker** in `MOCK` mode
-with zero external credentials. It is **not yet safe for real money** — that's gated on live
-verification that needs your Webull/Anthropic credentials. The AI decides freely on a
-wall-clock-aligned timer (default every 5 min); there is no meaningful-event gate.
+The full system (M0–M11) is **built, tested (91 tests), and running LIVE in Docker on the real
+Webull account** (`APM_EXECUTION_MODE=REAL`, `APM_TRADING_ENABLED=true`, market-hours-only).
+It runs as an **intraday day-trader** in **quant mode** (deterministic rules + AI supervisor)
+with **options (Model B) enabled**. Decisions fire on a wall-clock-aligned 5-min timer; every
+cycle's full reasoning is persisted to `audit_log`. Kill switch: `APM_TRADING_ENABLED=false`
+(+ recreate app) or the DB-backed half.
 
-## What works today (verified)
-- `docker compose up -d` → Postgres + always-on app; migrations auto-run; health endpoints.
-- Interval decision loop, clock-aligned (:00/:05/:10…). `APM_DECISION_INTERVAL_SECONDS`.
-- Full decision cycle: build state → build context → Claude (mock provider) → validate →
-  journal (incl. WAIT + counterfactual seeds) → optional guarded execution → reconcile.
-- Safety Guard (un-bypassable, fail-closed) + kill switch (`apm-killswitch`).
-- Execution lifecycle end-to-end **against the mock broker** (buy/close/PnL, idempotency).
-- Learning (counterfactual eval + metrics), backtest (no look-ahead), strategy versioning,
-  experiments, reviews.
+## What works today (LIVE-verified against the real account)
+- `docker compose up -d` → Postgres + always-on app; migrations auto-run; health at :8080.
+- Real auth (Thai account, cached token), balance (multi-currency USD sub-account), real
+  quotes + **snapshot-derived technicals & breadth** (the bars endpoint 404s for this
+  entitlement, so day open/high/low/prev-close drive support/resistance/ATR/trend/regime).
+- **Equity order path** verified: `EQUITY` instrument_type + `support_trading_session` +
+  `entrust_type` (both LIMIT and MARKET previews accepted).
+- **Options (OPRA)**: chain (STANDARD contracts only) + greeks/IV/OI via option snapshot; **v3
+  option order path** verified (BUY_TO_OPEN / SELL_TO_CLOSE previews OK).
+- **Quant mode (B)**: deterministic `QuantRuleProvider` decides each cycle; AI `SupervisorService`
+  sets `SupervisorPolicy` a few times/day (verified: it stood the book down in a risk-off tape).
+- **Intraday-flat**: EOD flatten closes equities (MARKET) and options (sell-to-close at bid).
+- Safety Guard (un-bypassable, fail-closed) + kill switch; guarded execution lifecycle;
+  learning/backtest/strategy/experiments/reviews; full `audit_log` per cycle.
+- Verify anytime (read-only previews): `uv run python scripts/verify_real_orderpath.py`.
 
-## What is written but NOT verified live (needs your creds) — Tier 1 blockers
-These are the gate to real money. See `docs/PHASE0_WEBULL_CHECKLIST.md`.
-1. **`RealWebullAdapter`** (`src/apm/webull/real.py`) — SDK calls are correct, but every
-   response/order JSON field name is a best-guess with a `_first(...)` fallback. **Run against
-   Webull SANDBOX and fix the field mappings** before trusting REAL orders.
-2. **`AnthropicProvider`** (`src/apm/decision/provider.py`) — only tested with a mocked
-   client (to avoid spend). Verify one real API call end-to-end.
-3. **Real-time order events (MQTT)** — not wired. Execution monitors fills by **polling**
-   (`get_order`). For REAL, consider the SDK's `trade_events_client` for push fills.
-4. **Partial fills** — the mock fills all-or-nothing; the PARTIAL_FILLED path is unexercised.
-5. **Webull ToS** — confirm automated trading is permitted + rate limits.
+## Known caveats / not verified live
+1. **Real fills** — previews are verified; actual fill + real option-position **repricing** for
+   premium TP/SL exits isn't fully proven (the EOD flatten is the hard backstop). Watch the
+   first live fills.
+2. **Real-time order events (MQTT)** — not wired; fills are polled (`get_order`).
+3. **Partial fills** — PARTIAL_FILLED path unexercised (mock fills all-or-nothing).
+4. **No VIX / historical bars** for this entitlement (see docs/STRATEGY_MODES.md).
+5. **Small account**: one option contract can be a large % of NAV — bounded by
+   `APM_OPTION_MAX_PREMIUM_PCT_NAV`.
 
 ## Not built yet — Tier 2 (makes it truly autonomous; no creds needed)
 6. **Market discovery** (`src/apm/discovery/`) — stub. The hook exists
@@ -46,11 +52,12 @@ These are the gate to real money. See `docs/PHASE0_WEBULL_CHECKLIST.md`.
 10. ~~Market-hours guard~~ ✅ **DONE** — `APM_MARKET_HOURS_ONLY=true` (default) skips cycles
     when the US market is closed (weekends/holidays/after-hours, DST-aware);
     `src/apm/marketdata/hours.py`. Update the holiday list annually.
-11. ~~Options (single-leg)~~ ✅ **DONE (M10)** — CALL/PUT with strike/expiry through the full
-    pipeline (chain → priced LIMIT order → guard → journal). Mock fully tested; Real adapter
-    written (best-effort field mapping). To use live: subscribe **OPRA** + set
-    `APM_OPTIONS_ENABLED=true`. Caveats: single-leg only (no spreads yet); trade-book P&L is
-    per-contract (not ×100 yet); Real option field mappings need a sandbox verify.
+11. ~~Options (single-leg)~~ ✅ **DONE (M10) + LIVE (OPRA)** — CALL/PUT through the full
+    pipeline (chain+greeks → priced LIMIT → guard → journal), v3 order path live-verified.
+    Model B rules (long calls) in quant mode. Caveats: single-leg only (no spreads);
+    trade-book P&L per-contract (not ×100 yet).
+11b. ~~Quant mode (B)~~ ✅ **DONE (M11)** — deterministic rules + AI supervisor
+    (`APM_STRATEGY_MODE=quant`). See docs/STRATEGY_MODES.md.
 12. Backtest realism (point-in-time data feed, corporate actions, survivorship).
 12. Retry/backoff on Webull + Anthropic calls; options order legs; CI (GitHub Actions);
     fill in `tests/webull_sandbox/` against the live sandbox.
