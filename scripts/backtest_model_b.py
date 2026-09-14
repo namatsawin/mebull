@@ -72,7 +72,7 @@ async def main() -> None:
     symbols = get_settings().watchlist_symbols
     all_sig: list[float] = []
     all_base: list[float] = []
-    print(f"Model B signal backtest — Z>={Z_MIN}, forward={K_FWD}x5m (30m), symbols={len(symbols)}\n")
+    print(f"Model B signal backtest — Z>={Z_MIN}, fwd={K_FWD}x5m (30m), n_sym={len(symbols)}\n")
     for sym in symbols:
         bars = await asyncio.to_thread(_bars, sym)
         if len(bars) < VOL_WIN + K_FWD + 1:
