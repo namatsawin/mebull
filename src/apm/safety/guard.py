@@ -129,6 +129,17 @@ class SafetyGuard:
                 f"quantity {request.quantity} exceeds max {self._max_quantity}",
             )
 
+        # 4b. Option-specific constraints (Webull): no MARKET, no SHORT, needs strike+expiry.
+        if request.is_option:
+            if request.order_type == OrderType.MARKET:
+                return block(
+                    SafetyViolation.MALFORMED_ORDER, "options do not support MARKET orders"
+                )
+            if request.side == Side.SHORT:
+                return block(SafetyViolation.MALFORMED_ORDER, "options do not support SHORT")
+            if request.option_strike is None or not request.option_expiry:
+                return block(SafetyViolation.MALFORMED_ORDER, "option order missing strike/expiry")
+
         # 5. State freshness + broker agreement (spec §31-32, §37).
         if ctx.last_reconciled_at is None:
             return block(SafetyViolation.STALE_STATE, "no reconciliation on record")
@@ -159,7 +170,9 @@ class SafetyGuard:
         if request.side == Side.BUY:
             cost = ctx.estimated_cost
             if cost is None and request.limit_price is not None:
-                cost = request.limit_price * request.quantity
+                # Options carry a 100x contract multiplier.
+                multiplier = 100 if request.is_option else 1
+                cost = request.limit_price * request.quantity * multiplier
             if cost is None:
                 return block(
                     SafetyViolation.INSUFFICIENT_BUYING_POWER,

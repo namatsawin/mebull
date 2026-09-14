@@ -21,6 +21,8 @@ from apm.domain import (
     AccountBalance,
     Bar,
     BrokerOrder,
+    OptionContract,
+    OptionRight,
     OrderPreview,
     OrderRequest,
     OrderStatus,
@@ -380,3 +382,120 @@ class RealWebullAdapter:
                 status=OrderStatus.CANCELLED,
             )
         return order
+
+    # --- options (single-leg) ------------------------------------------------
+    # ⚠️ LIVE-VERIFY (needs OPRA market-data subscription + a sandbox run): the option
+    # chain/snapshot/order field names below are best-effort per the Webull v3 option API.
+    async def get_option_chain(
+        self, underlying: str, *, expiry: str | None = None, right: OptionRight | None = None
+    ) -> list[OptionContract]:
+        await self._ensure()
+
+        def _call():
+            from webull.data.request.get_option_contracts_request import (
+                GetOptionContractsRequest,
+            )
+
+            req = GetOptionContractsRequest()
+            req.set_category("US_OPTION")
+            req.set_underlying_symbols(underlying.upper())
+            if right is not None:
+                req.set_option_type(right.value)
+            if expiry:
+                req.set_start_date(expiry)
+                req.set_end_date(expiry)
+            return self._api.get_response(req)
+
+        data = _json(await self._dispatch(_call))
+        rows = _first(data, "data", "contracts", default=[]) or []
+        out: list[OptionContract] = []
+        for r in rows:
+            rt = str(_first(r, "option_type", "direction", default="CALL")).upper()
+            out.append(
+                OptionContract(
+                    underlying=underlying.upper(),
+                    right=OptionRight.PUT if rt.startswith("P") else OptionRight.CALL,
+                    strike=_f(_first(r, "strike_price", "strike")),
+                    expiry=str(
+                        _first(r, "expire_date", "option_expire_date", "expiry", default="")
+                    ),
+                    symbol=_first(r, "symbol", "option_symbol", "instrument_id"),
+                    instrument_id=_first(r, "instrument_id"),
+                    last=_first(r, "last_price", "price", "close"),
+                    bid=_first(r, "bid_price", "bid"),
+                    ask=_first(r, "ask_price", "ask"),
+                )
+            )
+        return out
+
+    def _option_payload(self, req: OrderRequest) -> dict:
+        leg = {
+            "side": req.side.value,
+            "quantity": str(req.quantity),
+            "symbol": req.symbol.upper(),
+            "strike_price": str(req.option_strike),
+            "option_expire_date": req.option_expiry,
+            "option_type": "CALL" if req.instrument_type.value == "CALL_OPTION" else "PUT",
+            "instrument_type": "OPTION",
+            "market": self._market_category.split("_")[0],
+        }
+        if req.option_contract_symbol:
+            leg["option_symbol"] = req.option_contract_symbol
+        payload: dict[str, Any] = {
+            "client_order_id": req.client_order_id,
+            "symbol": req.symbol.upper(),
+            "instrument_type": "OPTION",
+            "option_strategy": req.option_strategy,
+            "order_type": req.order_type.value,
+            "side": req.side.value,
+            "quantity": str(req.quantity),
+            "time_in_force": req.time_in_force.value,
+            "legs": [leg],
+        }
+        if req.limit_price is not None:
+            payload["limit_price"] = str(req.limit_price)
+        return payload
+
+    async def preview_option_order(self, request: OrderRequest) -> OrderPreview:
+        await self._ensure()
+
+        def _call():
+            from webull.trade.request.v2.preview_option_request import PreviewOptionRequest
+
+            r = PreviewOptionRequest()
+            r.set_account_id(account_id=self._account_id)
+            r.set_new_orders(new_orders=[self._option_payload(request)])
+            return self._api.get_response(r)
+
+        data = _json(await self._dispatch(_call))
+        body = _first(data, "data", default=data) or {}
+        return OrderPreview(
+            ok=True,
+            estimated_cost=_first(body, "estimated_cost", "cost"),
+            estimated_commission=_first(body, "commission", "estimated_commission"),
+            raw=body if isinstance(body, dict) else {},
+        )
+
+    async def place_option_order(self, request: OrderRequest) -> BrokerOrder:
+        await self._ensure()
+
+        def _call():
+            from webull.trade.request.v2.place_option_request import PlaceOptionRequest
+
+            r = PlaceOptionRequest()
+            r.set_account_id(account_id=self._account_id)
+            r.set_new_orders(new_orders=[self._option_payload(request)])
+            return self._api.get_response(r)
+
+        data = _json(await self._dispatch(_call))
+        body = _first(data, "data", default=data) or {}
+        row = body[0] if isinstance(body, list) and body else body
+        if not isinstance(row, dict):
+            row = {}
+        row.setdefault("client_order_id", request.client_order_id)
+        row.setdefault("symbol", request.option_contract_symbol or request.symbol)
+        row.setdefault("side", request.side.value)
+        row.setdefault("quantity", request.quantity)
+        row.setdefault("order_type", request.order_type.value)
+        row.setdefault("limit_price", request.limit_price)
+        return self._parse_order(row)

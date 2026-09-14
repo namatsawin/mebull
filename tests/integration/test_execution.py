@@ -30,7 +30,7 @@ def _stack(adapter, canned, *, mode=ExecutionMode.SANDBOX, trading_enabled=True)
         adapter=adapter, guard=guard, journal=journal,
         portfolio=portfolio, reconcile=reconcile,
     )
-    coord = ExecutionCoordinator(execsvc, portfolio)
+    coord = ExecutionCoordinator(execsvc, portfolio, adapter)
     memory = MemoryService()
     engine = DecisionEngine(
         portfolio=portfolio,
@@ -69,6 +69,51 @@ async def test_buy_decision_executes_end_to_end(clean_db):
     assert len(trades) == 1
     assert trades[0].status == "OPEN"
     assert trades[0].symbol == "NVDA"
+
+
+async def test_option_buy_executes_end_to_end(clean_db):
+    from apm.domain import InstrumentType, OptionRight
+    adapter = MockWebullAdapter(starting_cash=100_000)
+    adapter.set_quote("SPY", 760.0)
+    chain = await adapter.get_option_chain("SPY", right=OptionRight.CALL)
+    c = chain[2]  # near ATM
+    canned = Decision(
+        decision_type=DecisionType.BUY, symbol="SPY",
+        instrument_type=InstrumentType.CALL_OPTION, quantity=1,
+        option_strike=c.strike, option_expiry=c.expiry,
+        confidence=0.8, reasoning_summary="bullish SPY",
+        opportunities_considered=["SPY"], selected_opportunity="SPY",
+    )
+    engine, portfolio = _stack(adapter, canned)
+    await portfolio.ensure_portfolio()
+    await engine.run_cycle("EVENT")
+
+    async with session_scope() as s:
+        orders = (await s.scalars(select(OrderRecord))).all()
+    assert len(orders) == 1
+    assert orders[0].instrument_type == "CALL_OPTION"
+    assert orders[0].status == "FILLED"
+
+
+async def test_option_market_order_blocked(clean_db):
+    # Options must be LIMIT — a MARKET option order is blocked by the Safety Guard.
+    import datetime as dt
+
+    from apm.domain import InstrumentType
+    from apm.domain import OrderRequest as OR
+    from apm.domain import OrderType as OT
+    from apm.domain import Side as SD
+    from apm.safety.guard import AuthorizationContext, SafetyGuard, SafetyViolation
+    guard = SafetyGuard(
+        settings=Settings(execution_mode=ExecutionMode.SANDBOX, trading_enabled=True)
+    )
+    now = dt.datetime.now(dt.UTC)
+    req = OR(client_order_id="o", symbol="SPY", instrument_type=InstrumentType.CALL_OPTION,
+             side=SD.BUY, quantity=1, order_type=OT.MARKET,
+             option_strike=760.0, option_expiry="2026-10-16")
+    auth = await guard.authorize(req, AuthorizationContext(
+        now=now, buying_power=100000, last_reconciled_at=now, reconciled_ok=True))
+    assert auth.violation is SafetyViolation.MALFORMED_ORDER
 
 
 async def test_order_blocked_by_insufficient_buying_power(clean_db):
@@ -140,7 +185,7 @@ async def test_idempotent_execution_same_decision(clean_db):
         adapter=adapter, guard=guard, journal=journal,
         portfolio=portfolio, reconcile=reconcile,
     )
-    coord = ExecutionCoordinator(execsvc, portfolio)
+    coord = ExecutionCoordinator(execsvc, portfolio, adapter)
     await portfolio.ensure_portfolio()
 
     # A real decision row is required (order_record.decision_id FK).

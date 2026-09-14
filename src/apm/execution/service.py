@@ -59,8 +59,12 @@ class ExecutionService:
         recon = await self._reconcile.reconcile(reason="pre-order")
         balance = await self._adapter.get_account_balance()
 
-        # 2. Broker preview for cost/impact (spec §30).
-        preview = await self._adapter.preview_order(request)
+        # 2. Broker preview for cost/impact (spec §30). Options use the option endpoints.
+        preview = await (
+            self._adapter.preview_option_order(request)
+            if request.is_option
+            else self._adapter.preview_order(request)
+        )
 
         # 3. Safety Guard — the un-bypassable gate (spec §34).
         ctx = AuthorizationContext(
@@ -79,7 +83,11 @@ class ExecutionService:
             return ExecutionResult(placed=False, authorization=auth)
 
         # 4. Submit (idempotent by client_order_id, spec §33).
-        order = await self._adapter.place_order(request)
+        order = await (
+            self._adapter.place_option_order(request)
+            if request.is_option
+            else self._adapter.place_order(request)
+        )
         order_db_id = await self._journal.upsert_order(order, request, decision_id=decision_id)
 
         # 5. Monitor to terminal/settled state (spec §30).

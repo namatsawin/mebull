@@ -56,7 +56,7 @@ class TradingApp:
                 portfolio=self._portfolio,
                 reconcile=self._reconcile,
             )
-            executor = RealCoordinator(exec_service, self._portfolio)
+            executor = RealCoordinator(exec_service, self._portfolio, self._adapter)
 
         self._engine = DecisionEngine(
             portfolio=self._portfolio,
