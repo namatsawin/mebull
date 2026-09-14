@@ -11,7 +11,7 @@ from apm.decision.context import DecisionContext
 from apm.decision.contract import Decision, DecisionType
 from apm.domain import InstrumentType, OptionRight, OrderRequest, OrderType, Side
 from apm.execution.idempotency import make_client_order_id
-from apm.execution.service import ExecutionService
+from apm.execution.service import ExecutionResult, ExecutionService
 from apm.observability import get_logger
 from apm.portfolio.service import PortfolioService
 from apm.webull.adapter import WebullAdapter
@@ -32,10 +32,10 @@ class ExecutionCoordinator:
 
     async def execute(
         self, decision: Decision, *, context: DecisionContext, decision_id: str
-    ) -> None:
+    ) -> ExecutionResult | None:
         request = await self._to_order_request(decision, context, decision_id)
         if request is None:
-            return
+            return None
         result = await self._execution.execute_order(request, decision_id=decision_id)
         log.info(
             "coordinator.result",
@@ -43,6 +43,7 @@ class ExecutionCoordinator:
             placed=result.placed,
             allowed=result.authorization.allowed,
         )
+        return result
 
     async def _to_order_request(
         self, decision: Decision, context: DecisionContext, decision_id: str

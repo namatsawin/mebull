@@ -19,6 +19,7 @@ from apm.domain import (
     AccountBalance,
     Bar,
     BrokerOrder,
+    InstrumentType,
     OptionContract,
     OptionRight,
     OrderPreview,
@@ -51,6 +52,9 @@ class MockWebullAdapter:
         self._positions: dict[str, Position] = {}
         self._orders: dict[str, BrokerOrder] = {}
         self._prices: dict[str, float] = {}
+        # For option positions: contract symbol -> (underlying, strike, right) so we can reprice
+        # the contract as the underlying drifts (moving P&L for practice).
+        self._option_meta: dict[str, tuple[str, float, OptionRight]] = {}
         # Default to real UTC now so freshness/staleness checks behave against wall-clock.
         self._now = now or dt.datetime.now(dt.UTC)
         # Practice mode: prices oscillate over time so the AI sees real signals and trades.
@@ -98,8 +102,20 @@ class MockWebullAdapter:
             as_of=self._now,
         )
 
+    def _position_price(self, pos: Position) -> float:
+        """Current mark for a position — option contracts are repriced from the underlying."""
+        meta = self._option_meta.get(pos.symbol)
+        if meta is not None:
+            underlying, strike, right = meta
+            return self._option_price(self._price(underlying), strike, right)
+        return self._price(pos.symbol)
+
     def _positions_value(self) -> float:
-        return sum(p.quantity * self._price(p.symbol) for p in self._positions.values())
+        total = 0.0
+        for p in self._positions.values():
+            mult = 100 if p.symbol in self._option_meta else 1
+            total += p.quantity * self._position_price(p) * mult
+        return total
 
     async def get_positions(self) -> list[Position]:
         out = []
@@ -110,7 +126,7 @@ class MockWebullAdapter:
                     instrument_type=p.instrument_type,
                     quantity=p.quantity,
                     avg_price=p.avg_price,
-                    market_price=self._price(p.symbol),
+                    market_price=self._position_price(p),
                 )
             )
         return out
@@ -270,8 +286,39 @@ class MockWebullAdapter:
             limit_price=request.limit_price, updated_at=self._now,
         )
         self._orders[request.client_order_id] = order
-        signed = 1 if request.side == Side.BUY else -1
-        self._cash -= signed * fill_px * request.quantity * 100
+        sign = 1 if request.side == Side.BUY else -1
+        self._cash -= sign * fill_px * request.quantity * 100
+
+        # Track the option position so the portfolio reflects it (the AI can then HOLD/CLOSE
+        # instead of blindly re-entering) and it can be repriced from the underlying.
+        contract = order.symbol
+        right = (
+            OptionRight.CALL
+            if request.instrument_type is InstrumentType.CALL_OPTION
+            else OptionRight.PUT
+        )
+        if request.option_strike is not None:
+            self._option_meta[contract] = (request.symbol.upper(), request.option_strike, right)
+        signed = sign * request.quantity
+        pos = self._positions.get(contract)
+        if pos is None:
+            self._positions[contract] = Position(
+                symbol=contract,
+                instrument_type=request.instrument_type,
+                quantity=signed,
+                avg_price=fill_px,
+            )
+        else:
+            new_qty = pos.quantity + signed
+            if abs(new_qty) < 1e-9:
+                del self._positions[contract]
+            elif (pos.quantity > 0) == (signed > 0):
+                pos.avg_price = (pos.avg_price * pos.quantity + fill_px * signed) / new_qty
+                pos.quantity = new_qty
+            else:
+                if abs(signed) > abs(pos.quantity):
+                    pos.avg_price = fill_px
+                pos.quantity = new_qty
         return order
 
     # --- fill engine ---------------------------------------------------------

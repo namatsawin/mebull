@@ -28,7 +28,7 @@ log = get_logger("engine")
 class ExecutionCoordinator(Protocol):
     async def execute(
         self, decision: Decision, *, context: DecisionContext, decision_id: str
-    ) -> None: ...
+    ) -> object | None: ...
 
 
 class DecisionEngine:
@@ -75,9 +75,34 @@ class DecisionEngine:
             symbol=decision.symbol,
         )
 
-        if decision.decision_type.places_order and self._executor is not None:
-            await self._executor.execute(decision, context=context, decision_id=decision_id)
-        elif decision.decision_type.places_order:
+        order_intent = decision.decision_type.places_order
+        order_placed = False
+        block_reason: str | None = None
+        if order_intent and self._executor is not None:
+            result = await self._executor.execute(
+                decision, context=context, decision_id=decision_id
+            )
+            if result is not None:
+                order_placed = bool(getattr(result, "placed", False))
+                auth = getattr(result, "authorization", None)
+                if not order_placed and auth is not None:
+                    block_reason = getattr(auth, "reason", None)
+        elif order_intent:
             log.info("engine.analysis_only", decision_id=decision_id, note="order not placed")
+            block_reason = "analysis-only (no executor)"
+
+        # Full audit trail of this cycle's reasoning — order or not (spec §17). Best-effort.
+        try:
+            await self._journal.write_audit(
+                trigger=trigger,
+                decision=decision,
+                context_dict=context.to_prompt_dict(),
+                decision_id=decision_id,
+                order_intent=order_intent,
+                order_placed=order_placed,
+                block_reason=block_reason,
+            )
+        except Exception as exc:  # noqa: BLE001 - audit must never break the loop
+            log.warning("engine.audit_failed", error=str(exc))
 
         return decision

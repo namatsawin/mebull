@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from apm.config import get_settings
 from apm.db import session_scope
 from apm.db.models import (
+    AuditLog,
     Counterfactual,
     DecisionCandidate,
     Execution,
@@ -75,7 +76,7 @@ class JournalService:
                 confidence=decision.confidence,
                 reasoning_summary=decision.reasoning_summary,
                 opportunities_considered=decision.opportunities_considered,
-                selected_opportunity=decision.selected_opportunity,
+                selected_opportunity=(decision.selected_opportunity or "")[:255] or None,
                 rejected_opportunities=[r.model_dump() for r in decision.rejected_opportunities],
                 alternatives_considered=decision.alternatives_considered,
                 portfolio_state_snapshot=portfolio_state.snapshot_summary(),
@@ -124,6 +125,36 @@ class JournalService:
             considered=len(decision.opportunities_considered),
         )
         return decision_id
+
+    async def write_audit(
+        self,
+        *,
+        trigger: str,
+        decision: Decision,
+        context_dict: dict,
+        decision_id: str | None,
+        order_intent: bool,
+        order_placed: bool = False,
+        block_reason: str | None = None,
+    ) -> None:
+        """Persist the full reasoning of one cycle — order or not (spec §17). Best-effort:
+        never raise into the decision loop."""
+        async with session_scope() as s:
+            s.add(
+                AuditLog(
+                    portfolio_id=decision.portfolio_id or get_settings().portfolio_id,
+                    timestamp=_utcnow(),
+                    trigger=trigger[:32],
+                    decision_id=decision_id,
+                    decision_type=decision.decision_type.value,
+                    confidence=decision.confidence,
+                    order_intent=order_intent,
+                    order_placed=order_placed,
+                    block_reason=block_reason,
+                    context=context_dict,
+                    decision=decision.model_dump(mode="json"),
+                )
+            )
 
     # --- order / execution lifecycle (used by execution service, M7) ---------
     async def upsert_order(

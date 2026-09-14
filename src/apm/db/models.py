@@ -85,7 +85,8 @@ class PositionRecord(Base, TimestampMixin):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     portfolio_id: Mapped[str] = mapped_column(ForeignKey("portfolio.id"), index=True)
-    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    # Wide enough for option contract symbols, e.g. "AKAM 2026-10-14 C 420.0".
+    symbol: Mapped[str] = mapped_column(String(64), index=True)
     instrument_type: Mapped[str] = mapped_column(String(16), default="STOCK")
     quantity: Mapped[float] = mapped_column(Float)
     avg_price: Mapped[float] = mapped_column(Float)
@@ -119,7 +120,7 @@ class Decision(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     reasoning_summary: Mapped[str] = mapped_column(Text, default="")
     opportunities_considered: Mapped[list] = mapped_column(JSON, default=list)
-    selected_opportunity: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    selected_opportunity: Mapped[str | None] = mapped_column(String(255), nullable=True)
     rejected_opportunities: Mapped[list] = mapped_column(JSON, default=list)
     alternatives_considered: Mapped[list] = mapped_column(JSON, default=list)
 
@@ -161,7 +162,8 @@ class OrderRecord(Base):
     decision_id: Mapped[str | None] = mapped_column(ForeignKey("decision.id"), nullable=True)
     portfolio_id: Mapped[str] = mapped_column(ForeignKey("portfolio.id"), index=True)
 
-    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    # Wide enough for option contract symbols, e.g. "AKAM 2026-10-14 C 420.0".
+    symbol: Mapped[str] = mapped_column(String(64), index=True)
     instrument_type: Mapped[str] = mapped_column(String(16), default="STOCK")
     side: Mapped[str] = mapped_column(String(8))
     quantity: Mapped[float] = mapped_column(Float)
@@ -447,3 +449,32 @@ class SystemFlag(Base, TimestampMixin):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(255))
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AuditLog(Base):
+    """Full audit trail of the AI's reasoning every trigger cycle — order or not (spec §17).
+
+    Captures the exact input context the model saw and its full decision output, so any cycle
+    is reconstructable and reviewable even when the outcome was WAIT/HOLD. The ``decision``
+    table stays the queryable summary; this is the complete raw record.
+    """
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    portfolio_id: Mapped[str] = mapped_column(index=True)
+    timestamp: Mapped[dt.datetime] = mapped_column(
+        index=True, default=lambda: dt.datetime.now(dt.UTC)
+    )
+    trigger: Mapped[str] = mapped_column(String(32))
+    decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("decision.id"), nullable=True, index=True
+    )
+    decision_type: Mapped[str] = mapped_column(String(16))
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    order_intent: Mapped[bool] = mapped_column(Boolean, default=False)
+    order_placed: Mapped[bool] = mapped_column(Boolean, default=False)
+    block_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context: Mapped[dict] = mapped_column(JSON, default=dict)  # full input the AI saw
+    decision: Mapped[dict] = mapped_column(JSON, default=dict)  # full decision output
+    created_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.UTC))
