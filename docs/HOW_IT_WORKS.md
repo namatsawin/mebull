@@ -40,15 +40,14 @@ So Claude is smart but not trusted with power. A separate **Safety Guard** can a
         │  ALWAYS-ON PROGRAM    │   runs 24/7 in Docker
         │  (the orchestrator)   │
         │                       │
-        │  • watches the clock  │
-        │  • watches the market │
         │  • keeps state fresh  │
         │  • the Safety Guard   │
+        │  • runs a timer       │
         └───────────┬───────────┘
-                    │  only when something MATTERS
+                    │  every N seconds (APM_DECISION_INTERVAL_SECONDS)
                     ▼
                  ┌───────┐
-                 │ CLAUDE│  "given all this, what should I do?"
+                 │ CLAUDE│  "given all this, what should I do?"  ← decides freely
                  └───┬───┘
                      ▼
                  DECISION   (BUY / SELL / CLOSE / HOLD / WAIT / ...)
@@ -69,9 +68,11 @@ So Claude is smart but not trusted with power. A separate **Safety Guard** can a
                                 └────────▶ back to CLAUDE next time
 ```
 
-Key idea: **Claude is not called on every price tick.** The always-on program filters
-noise first, and only "wakes" Claude when something meaningful happens (a scheduled review,
-a big price move, an order fill, etc). This saves money and avoids over-trading.
+Key idea: **the AI decides freely on a timer.** Every `APM_DECISION_INTERVAL_SECONDS`
+(e.g. 300 = 5 minutes) the program runs one full decision cycle and Claude decides for
+itself what to do — including doing nothing (`WAIT`). There is no filter deciding "is this
+worth it?"; Claude is fully in charge of each cycle. Set the interval higher to save money,
+lower to react faster.
 
 ---
 
@@ -88,13 +89,11 @@ Every part lives in `src/apm/<name>/`.
 | **Journal** | `journal/` | Save every decision, order, fill, and trade. |
 | **Memory** | `memory/` | Save lessons learned. Keep old versions, never erase. |
 | **Decision engine** | `decision/` | Build the context, ask Claude, check the answer. |
-| **Events** | `events/` | Decide if something is "worth waking Claude for". |
-| **Scheduler** | `scheduler/` | Wake Claude at set times (open, midday, close, weekly...). |
 | **Safety Guard** | `safety/` | The bouncer. Says yes/no to every order. Claude can't bypass it. |
 | **Execution** | `execution/` | The careful steps to place a real order safely. |
 | **Learning** | `learning/` | Score past decisions, work out "what if", compute stats. |
 | **Research** | `research/` | Backtest ideas and version strategies. Never touches real money. |
-| **Orchestrator** | `orchestrator/` | Starts everything and runs the loop. Health endpoints. |
+| **Orchestrator** | `orchestrator/` | Starts everything and runs the interval decision loop. Health endpoints. |
 
 ---
 
@@ -142,7 +141,7 @@ EXPERIMENT try a new idea in a controlled way
 **Example A — the AI waits**
 
 ```
-9:35am review fires
+timer fires (every N seconds)
   → get money + positions + quotes for SPY/QQQ/NVDA/TSLA
   → ask Claude
   → Claude: "Market is choppy. NVDA, QQQ, SPY all weak setups. WAIT."
@@ -154,9 +153,8 @@ Later: learning engine checks what those 3 would have done → evidence for next
 **Example B — the AI buys**
 
 ```
-event: NVDA jumps +4%
-  → is this meaningful? yes (> 3% threshold)
-  → wake Claude
+timer fires
+  → get money + positions + quotes; Claude sees NVDA is up strongly
   → Claude: "BUY NVDA 10 shares, thesis = breakout, stop if it loses 148"
   → SAFETY GUARD checks: money ok? not a duplicate? state fresh? ... all yes → ALLOW
   → place order on Webull → filled at 150

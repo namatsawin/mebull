@@ -19,9 +19,9 @@ Claude uses that knowledge for the NEXT decision.
 Owner ──(optional watchlist)──▶ Portfolio Identity
         │
         ▼
-Always-On Infrastructure  (webull monitor · market data · event detector · scheduler ·
-        │                  portfolio state · reconciliation · safety guard · observability)
-        │  meaningful event
+Always-On Infrastructure  (market data · portfolio state · reconciliation ·
+        │                  safety guard · observability · interval decision loop)
+        │  every APM_DECISION_INTERVAL_SECONDS
         ▼
 Claude (portfolio manager) ─▶ opportunity discovery ─▶ DECISION
         │
@@ -50,12 +50,15 @@ Claude (portfolio manager) ─▶ opportunity discovery ─▶ DECISION
 | `memory` | versioned persistent knowledge + retrieval | M3/M4 |
 | `decision` | ClaudeProvider, context builder, contract, validation | M4 |
 | `discovery` | opportunity discovery signals (no candidate gate) | M5 |
-| `events` | event detection + meaningful-event wake logic | M5 |
-| `scheduler` | scheduled reviews (APScheduler) | M5 |
+| `orchestrator` | interval decision loop (every APM_DECISION_INTERVAL_SECONDS) | M5 |
 | `safety` | Safety Guard (independent, un-bypassable) | M6 |
 | `execution` | order lifecycle via Safety Guard, idempotency | M7 |
 | `learning` | trade/counterfactual eval, metrics | M8 |
 | `research` | backtesting + research (never touches account) | M8 |
+
+> Note: the AI decides freely on a fixed timer — there is no meaningful-event gate or cron
+> scheduler. The earlier `events`/`scheduler` modules were removed in favor of the simple
+> interval loop in `orchestrator`.
 
 ## Key invariants
 - **Decision ≠ Order ≠ Execution ≠ Trade** — separate records (spec §18).

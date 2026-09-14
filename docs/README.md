@@ -6,7 +6,7 @@ Start here to understand the system.
 - **[HOW_IT_WORKS.md](HOW_IT_WORKS.md)** — what it is, the parts, the modes, the safety
   layer, and worked examples. **Read this first.**
 - **[LIFECYCLE.md](LIFECYCLE.md)** — step by step: startup, event → decision, placing an
-  order safely, the scheduler, learning, and the kill switch.
+  order safely, the decision timer, learning, and the kill switch.
 - **[DATA_MODEL.md](DATA_MODEL.md)** — the database: all tables, how they connect, and how
   to look inside.
 

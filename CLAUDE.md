@@ -43,7 +43,7 @@ src/apm/
   db/                 async engine/session, ORM base, (repositories M2+)
   orchestrator/       main.py (entrypoint), health.py, migrate.py
   webull/ marketdata/ portfolio/ reconcile/ journal/ memory/ decision/
-  discovery/ events/ scheduler/ safety/ execution/ learning/ research/
+  discovery/ safety/ execution/ learning/ research/
 migrations/           Alembic (async env.py); models register on Base.metadata
 claude/               system-prompt.md, decision-schema.json, prompts/
 docs/                 ARCHITECTURE / RUNBOOK / PHASE0_WEBULL_CHECKLIST
@@ -64,7 +64,7 @@ models under `apm/db/models` (import them so they register on `Base.metadata`), 
 
 ## Milestones (all implemented)
 M0 scaffold ✅ · M1 Webull adapter (Protocol+Mock+Real) ✅ · M2 portfolio+reconcile ✅ ·
-M3 journal+memory ✅ · M4 Claude engine ✅ · M5 events+scheduler ✅ · M6 Safety Guard+kill
+M3 journal+memory ✅ · M4 Claude engine ✅ · M5 interval decision loop ✅ · M6 Safety Guard+kill
 switch ✅ · M7 execution (guarded lifecycle) ✅ · M8 learning+backtest+strategy/experiment/
 reviews ✅ · M9 REAL flag-gated ✅. Build order per spec §69 / App. C: infrastructure first,
 real execution last. **REAL is still gated on the Phase 0 checklist + live sandbox

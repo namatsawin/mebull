@@ -15,8 +15,6 @@ dependencies = [
     # Config / validation
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
-    # Scheduling
-    "apscheduler>=3.10,<4",
     # Observability
     "structlog>=24.1",
     "prometheus-client>=0.20",

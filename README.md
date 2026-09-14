@@ -21,7 +21,7 @@ docker compose logs -f app
 ```
 
 ## Stack
-Python 3.12 · asyncio · Postgres + SQLAlchemy(async)/Alembic · APScheduler ·
+Python 3.12 · asyncio · Postgres + SQLAlchemy(async)/Alembic · interval decision loop ·
 Anthropic API (pay-per-token) · Webull official Python SDK · structlog · FastAPI health.
 
 ## Where things are
@@ -34,7 +34,7 @@ Anthropic API (pay-per-token) · Webull official Python SDK · structlog · Fast
 
 ## Milestones — all implemented ✅
 M0 scaffold → M1 Webull adapter → M2 portfolio+reconcile → M3 journal+memory →
-M4 Claude engine → M5 events+scheduler → M6 Safety Guard+kill switch → M7 guarded execution
+M4 Claude engine → M5 interval decision loop → M6 Safety Guard+kill switch → M7 guarded execution
 → M8 learning+backtest+strategy/experiment/reviews → M9 REAL (flag-gated).
 
 **Before enabling REAL:** complete `docs/PHASE0_WEBULL_CHECKLIST.md` and run against Webull

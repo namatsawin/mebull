@@ -22,16 +22,15 @@ docker compose up
 5. app.start():
         - make sure the portfolio row exists
         - RECONCILE with Webull (our records = Webull's truth)
-        - start the "worker" (the loop that processes events)
-6. start the SCHEDULER (adds the timed reviews)
+6. start the DECISION LOOP (runs a cycle now, then every N seconds)
 7. start the HEALTH server (/health, /ready, /status, /metrics)
       │
       ▼
-   now it just runs and waits for events
+   now it runs a decision cycle every APM_DECISION_INTERVAL_SECONDS
       │
    (SIGTERM / Ctrl-C)
       ▼
-8. shutdown: stop scheduler → stop worker → stop health server
+8. shutdown: stop the loop → stop the app → stop health server
 ```
 
 Health endpoints you can curl:
@@ -45,46 +44,39 @@ Health endpoints you can curl:
 
 ---
 
-## 2. From "something happened" to a decision
+## 2. The timer → a free decision
 
-Two things create events: the **scheduler** (timed) and the **market/portfolio** (live).
-Both go through the same gate.
+There is **no** meaningful-event gate. A single timer drives everything: every
+`APM_DECISION_INTERVAL_SECONDS` the orchestrator runs one full decision cycle, and Claude
+decides for itself what to do.
 
 ```
-        SCHEDULER                         MARKET / PORTFOLIO
-   (open, midday, close,                (big move, fill, etc.)
-    weekly, monthly)                            │
-        │                                       │
-        └───────────────┬───────────────────────┘
-                        ▼
-                 app.submit(event)
-                        │
-                        ▼
-             EventDetector: is this meaningful?     (src/apm/events/detector.py)
-              • scheduled reviews → always yes
-              • order fills/rejects → always yes
-              • price move → only if ≥ threshold (e.g. 3%)
-              • volume spike → only if ≥ ratio (e.g. 3x)
-              • news → only if "high impact"
-                        │
-             ┌──────────┴───────────┐
-             │ no                    │ yes
-             ▼                       ▼
-      log "ignored",           put on the QUEUE
-      do nothing                     │
-                                     ▼
-                          WORKER picks it up (one at a time)
-                                     │
-                                     ▼
-                          engine.run_cycle(event)
-                                     │
-                  (if it was a review event)
-                                     ▼
-                          also generate a Review record
+   ┌──────────────────────────────────────────────┐
+   │  decision loop (src/apm/orchestrator/main.py) │
+   │                                               │
+   │   run one cycle now                           │
+   │        │                                      │
+   │        ▼                                      │
+   │   app.run_once("PERIODIC")                    │
+   │        │   → engine.run_cycle()  (see §3)     │
+   │        │   → evaluate counterfactuals         │
+   │        ▼                                      │
+   │   wait N seconds (or wake on shutdown)        │
+   │        │                                      │
+   │        └────────── repeat ───────────────┐   │
+   └──────────────────────────────────────────┼───┘
+                                               ▼
 ```
 
-Why a queue with one worker? So the AI only reasons about **one** thing at a time — no two
-decisions racing each other.
+Cycles run one after another (never overlapping): the loop always waits for a cycle to
+finish before sleeping, so the AI only reasons about one thing at a time.
+
+Set the interval in the environment:
+
+```
+APM_DECISION_INTERVAL_SECONDS=300   # every 5 minutes (default)
+APM_DECISION_INTERVAL_SECONDS=60    # every minute (more reactive, more cost)
+```
 
 ---
 
@@ -157,24 +149,23 @@ refresh**. The guard sits in the middle and cannot be skipped.
 
 ---
 
-## 5. What runs on a timer (the scheduler)
+## 5. The timer
 
-File: `src/apm/scheduler/jobs.py` (times are UTC)
+File: `src/apm/orchestrator/main.py` → `_decision_loop()`
+
+There is just **one** knob: how often to run a decision cycle.
 
 ```
-MARKET_OPEN_REVIEW    Mon–Fri 13:35
-MID_SESSION_REVIEW    Mon–Fri 17:00
-MARKET_CLOSE_REVIEW   Mon–Fri 19:55
-END_OF_DAY_REVIEW     Mon–Fri 21:15   → also writes a DAILY review
-WEEKLY_REVIEW         Fri     21:30   → also writes a WEEKLY review
-MONTHLY_REVIEW        1st     12:00   → also writes a MONTHLY review
+APM_DECISION_INTERVAL_SECONDS   (default 300 = every 5 minutes)
 ```
 
-Each timer just drops an event on the same queue as everything else, so a scheduled review
-runs the exact same decision cycle described above.
+The loop runs a cycle immediately on startup, then waits that many seconds and runs again,
+forever, until shutdown. Every cycle is a full, free decision (§3) plus a counterfactual
+update. Lower the number to react faster (costs more tokens); raise it to save money.
 
-> Note: these are fixed UTC times and do not yet handle daylight saving or market holidays.
-> That is on the "to improve" list before REAL trading.
+> Note: this is a simple fixed interval — it does not know about market open/close hours or
+> holidays. If you only want it active during market hours, gate it outside the app (e.g.
+> start/stop the container on a schedule) or add a market-calendar check later.
 
 ---
 

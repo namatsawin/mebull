@@ -1,26 +1,24 @@
 """TradingApp — wires the always-on infrastructure around the decision engine (spec §11).
 
-One serialized reasoning path: scheduled reviews and market/portfolio events are gated by
-the EventDetector, and meaningful ones are queued and processed one-at-a-time by the engine
-(spec §12). Analysis-only until an executor is injected (M7); the executor still routes
-through the Safety Guard (spec §79).
+The AI decides freely: every trigger runs one full decision cycle and Claude chooses
+BUY/SELL/CLOSE/HOLD/WAIT/... on its own. There is no meaningful-event gate — the
+orchestrator simply calls ``run_once`` on a fixed interval (APM_DECISION_INTERVAL_SECONDS).
+
+Analysis-only until an executor is injected; the executor still routes through the Safety
+Guard, which independently decides whether execution is permitted (spec §79).
 """
 
 from __future__ import annotations
 
-import asyncio
-
 from apm.config import Settings, get_settings
-from apm.db import session_scope
-from apm.db.models import SystemEvent
 from apm.decision.context_builder import ContextBuilder
-from apm.decision.engine import DecisionEngine
+from apm.decision.contract import Decision
+from apm.decision.engine import DecisionEngine, ExecutionCoordinator
 from apm.decision.provider import build_provider
-from apm.events.detector import Event, EventDetector
-from apm.execution.coordinator import ExecutionCoordinator
+from apm.execution.coordinator import ExecutionCoordinator as RealCoordinator
 from apm.execution.service import ExecutionService
 from apm.journal.service import JournalService
-from apm.learning.review import PERIOD_FOR_EVENT, ReviewService
+from apm.learning.evaluator import LearningService
 from apm.memory.service import MemoryService
 from apm.observability import get_logger
 from apm.portfolio.service import PortfolioService
@@ -45,8 +43,7 @@ class TradingApp:
         self._memory = MemoryService(self._settings.portfolio_id)
         self._journal = JournalService()
         self._reconcile = ReconciliationService(self._adapter, self._portfolio)
-        self._review = ReviewService(self._adapter)
-        self._detector = EventDetector()
+        self._learning = LearningService(self._adapter)
 
         # Execution stack: decisions that place orders route through the Safety Guard
         # (spec §30, §34). Every mode uses it; the guard gates whether REAL is permitted.
@@ -59,7 +56,7 @@ class TradingApp:
                 portfolio=self._portfolio,
                 reconcile=self._reconcile,
             )
-            executor = ExecutionCoordinator(exec_service, self._portfolio)
+            executor = RealCoordinator(exec_service, self._portfolio)
 
         self._engine = DecisionEngine(
             portfolio=self._portfolio,
@@ -69,8 +66,6 @@ class TradingApp:
             memory=self._memory,
             executor=executor,
         )
-        self._queue: asyncio.Queue[Event] = asyncio.Queue()
-        self._worker: asyncio.Task | None = None
 
     @property
     def reconcile(self) -> ReconciliationService:
@@ -79,57 +74,21 @@ class TradingApp:
     async def start(self) -> None:
         await self._portfolio.ensure_portfolio()
         await self._reconcile.reconcile(reason="startup")
-        self._worker = asyncio.create_task(self._run_worker(), name="decision-worker")
-        log.info("app.started", execution_mode=self._settings.execution_mode.value)
+        log.info(
+            "app.started",
+            execution_mode=self._settings.execution_mode.value,
+            interval_seconds=self._settings.decision_interval_seconds,
+        )
 
-    async def submit(self, event: Event) -> bool:
-        """Gate an event; enqueue if meaningful (spec §12). Returns whether it was queued."""
-        meaningful = self._detector.is_meaningful(event)
-        await self._record_event(event, meaningful)
-        if meaningful:
-            await self._queue.put(event)
-        else:
-            log.info("event.ignored", type=event.type.value, symbol=event.symbol)
-        return meaningful
-
-    async def wait_idle(self) -> None:
-        """Block until all queued events have been processed (tests / graceful drain)."""
-        await self._queue.join()
-
-    async def _record_event(self, event: Event, meaningful: bool) -> None:
+    async def run_once(self, trigger: str = "PERIODIC") -> Decision:
+        """Run one full decision cycle: the AI decides freely, we journal, and (if it chose
+        to trade) the order goes through the Safety Guard. Then keep learning up to date."""
+        decision = await self._engine.run_cycle(trigger)
         try:
-            async with session_scope() as s:
-                s.add(
-                    SystemEvent(
-                        event_type=f"event:{event.type.value}",
-                        severity="info",
-                        message="queued" if meaningful else "ignored",
-                        payload={"symbol": event.symbol, "meaningful": meaningful, **event.payload},
-                    )
-                )
-        except Exception as exc:  # noqa: BLE001 - observability must never crash the path
-            log.warning("event.record_failed", error=str(exc))
-
-    async def _run_worker(self) -> None:
-        while True:
-            event = await self._queue.get()
-            try:
-                await self._engine.run_cycle(event.type.value)
-                period = PERIOD_FOR_EVENT.get(event.type.value)
-                if period:
-                    await self._review.generate(period)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - one bad cycle must not kill the loop
-                log.error("cycle.failed", type=event.type.value, error=str(exc))
-            finally:
-                self._queue.task_done()
+            await self._learning.evaluate_counterfactuals()
+        except Exception as exc:  # noqa: BLE001 - learning must never break the loop
+            log.warning("learning.failed", error=str(exc))
+        return decision
 
     async def stop(self) -> None:
-        if self._worker is not None:
-            self._worker.cancel()
-            try:
-                await self._worker
-            except asyncio.CancelledError:
-                pass
         log.info("app.stopped")
