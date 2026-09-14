@@ -44,6 +44,7 @@ class PortfolioState(BaseModel):
             "positions": [
                 {
                     "symbol": p.symbol,
+                    "instrument_type": p.instrument_type.value,
                     "quantity": p.quantity,
                     "avg_price": p.avg_price,
                     "market_price": p.market_price,

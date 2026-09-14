@@ -268,11 +268,20 @@ class MockWebullAdapter:
                 if strike <= 0:
                     continue
                 p = self._option_price(px, strike, r)
+                # Deterministic greeks/IV/liquidity so MOCK exercises the same rules as REAL.
+                moneyness = (px - strike) / px if px else 0.0
+                if r == OptionRight.CALL:
+                    delta = round(min(0.95, max(0.05, 0.5 + moneyness * 5)), 4)
+                else:
+                    delta = round(-min(0.95, max(0.05, 0.5 - moneyness * 5)), 4)
                 out.append(
                     OptionContract(
                         underlying=underlying.upper(), right=r, strike=strike, expiry=expiry,
                         symbol=f"{underlying.upper()} {expiry} {r.value[0]} {strike}",
                         last=p, bid=round(p * 0.98, 2), ask=round(p * 1.02, 2),
+                        delta=delta, gamma=0.05, theta=round(-px * 0.002, 4),
+                        vega=round(px * 0.01, 4), iv=0.45,
+                        open_interest=1000.0, volume=5000.0,
                     )
                 )
         return out

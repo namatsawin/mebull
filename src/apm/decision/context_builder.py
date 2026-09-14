@@ -135,8 +135,15 @@ class ContextBuilder:
                     "right": c.right.value,
                     "strike": c.strike,
                     "expiry": c.expiry,
+                    "symbol": c.symbol,
+                    "bid": c.bid,
+                    "ask": c.ask,
                     "mid": c.mid,
                     "cost": c.contract_cost,
+                    "delta": c.delta,
+                    "iv": c.iv,
+                    "open_interest": c.open_interest,
+                    "volume": c.volume,
                 }
                 for c in chain
                 if c.contract_cost is not None and c.contract_cost <= buying_power

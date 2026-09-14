@@ -121,39 +121,69 @@ class ExecutionCoordinator:
         )
 
     async def flatten_all(self, *, reason: str = "eod-flatten") -> int:
-        """Deterministically close every open equity position (intraday-flat, spec §36 safety).
-        Routes each close through the Safety Guard like any order — never bypasses it. Option
-        positions are left to the model's own CLOSE (they need a contract-resolved limit); a
-        warning is logged so they're never silently held. Returns close orders submitted."""
+        """Deterministically close every open position (intraday-flat, spec §36 safety) — equities
+        AND options (a held 0DTE must never reach expiry). Routes each close through the Safety
+        Guard; never bypasses it. Returns close orders submitted."""
         positions = await self._portfolio.latest_persisted_positions()
         submitted = 0
         for pos in positions:
             if not pos.quantity:
                 continue
             if pos.instrument_type in (InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION):
-                log.warning("flatten.option_skipped", symbol=pos.symbol, quantity=pos.quantity)
-                continue
-            side = Side.SELL if pos.quantity > 0 else Side.BUY
-            request = OrderRequest(
-                client_order_id=make_client_order_id(f"{reason}:{pos.symbol}:{pos.quantity}"),
-                symbol=pos.symbol,
-                instrument_type=pos.instrument_type or InstrumentType.STOCK,
-                side=side,
-                quantity=abs(pos.quantity),
-                order_type=OrderType.MARKET,
-                time_in_force=_default_tif(),
-            )
+                request = await self._flatten_option_request(pos, reason)
+                if request is None:
+                    log.error("flatten.option_unresolved", symbol=pos.symbol, qty=pos.quantity)
+                    continue
+            else:
+                side = Side.SELL if pos.quantity > 0 else Side.BUY
+                request = OrderRequest(
+                    client_order_id=make_client_order_id(f"{reason}:{pos.symbol}:{pos.quantity}"),
+                    symbol=pos.symbol,
+                    instrument_type=pos.instrument_type or InstrumentType.STOCK,
+                    side=side,
+                    quantity=abs(pos.quantity),
+                    order_type=OrderType.MARKET,
+                    time_in_force=_default_tif(),
+                )
             result = await self._execution.execute_order(request, decision_id=None)
             if result.placed:
                 submitted += 1
-                log.info(
-                    "flatten.closed", symbol=pos.symbol, side=side.value, qty=abs(pos.quantity)
-                )
+                log.info("flatten.closed", symbol=request.symbol, qty=request.quantity)
             else:
                 log.warning(
                     "flatten.blocked", symbol=pos.symbol, reason=result.authorization.reason
                 )
         return submitted
+
+    async def _flatten_option_request(self, pos, reason: str) -> OrderRequest | None:
+        """Build a marketable sell-to-close for a held option (LIMIT at current bid)."""
+        from apm.strategy.options import parse_contract_symbol
+
+        parsed = parse_contract_symbol(pos.symbol)
+        if parsed is None or pos.quantity <= 0:
+            return None  # short options / unparseable: escalate via the error log above
+        chain = await self._adapter.get_option_chain(
+            parsed["underlying"], expiry=parsed["expiry"], right=parsed["right"]
+        )
+        match = min(
+            (c for c in chain if c.expiry == parsed["expiry"]) or chain,
+            key=lambda c: abs(c.strike - parsed["strike"]),
+            default=None,
+        )
+        limit = (match.bid if match else None) or (match.mid if match else None) or 0.01
+        return OrderRequest(
+            client_order_id=make_client_order_id(f"{reason}:{pos.symbol}:{pos.quantity}"),
+            symbol=parsed["underlying"],
+            instrument_type=parsed["instrument_type"],
+            side=Side.SELL,
+            quantity=abs(pos.quantity),
+            order_type=OrderType.LIMIT,
+            limit_price=round(limit, 2),
+            option_strike=parsed["strike"],
+            option_expiry=parsed["expiry"],
+            option_contract_symbol=(match.symbol if match else pos.symbol),
+            time_in_force=_default_tif(),
+        )
 
     async def _resolve_side_quantity(self, decision: Decision):
         if decision.decision_type is DecisionType.CLOSE:

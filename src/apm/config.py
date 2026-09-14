@@ -73,6 +73,21 @@ class Settings(BaseSettings):
     flatten_before_close_minutes: int = 15
     # Soft guidance to the model: risk at most this % of buying power on a single trade.
     max_risk_per_trade_pct: float = 2.0
+
+    # --- Options (Model B, quant mode) --------------------------------------
+    # Buy at most this many contracts per trade (small account: keep it 1).
+    option_max_contracts: int = 1
+    # Cap a single option premium at this % of NAV (max loss = premium). On a tiny account one
+    # contract can be a large %; this bounds the concentration you accept.
+    option_max_premium_pct_nav: float = 40.0
+    # Target |delta| band for entries (ATM-ish for gamma, per Model B).
+    option_delta_min: float = 0.40
+    option_delta_max: float = 0.65
+    # Liquidity filter: reject if bid/ask spread exceeds this % of mid.
+    option_max_spread_pct: float = 12.0
+    # Deterministic exits on premium P&L.
+    option_take_profit_pct: float = 30.0
+    option_stop_loss_pct: float = 20.0
     # Include an (affordable) option-chain slice per watchlist symbol in Claude's context so
     # it can trade options — needs the Webull OPRA option-data subscription. Off by default
     # (would 403 every cycle without OPRA).

@@ -525,26 +525,35 @@ class RealWebullAdapter:
             c.volume = _fopt(_first(r, "volume"))
 
     def _option_payload(self, req: OrderRequest) -> dict:
+        """v3 single-leg option order. LIVE-VERIFIED shape: flat strategy fields on top +
+        one leg keyed by UNDERLYING symbol + option_type/strike/expiry (NOT the OCC symbol),
+        with side + position_intent on both. Long-only flow: BUY=open, SELL=close."""
+        option_type = "CALL" if req.instrument_type.value == "CALL_OPTION" else "PUT"
+        intent = "BUY_TO_OPEN" if req.side.value == "BUY" else "SELL_TO_CLOSE"
+        market = self._market_category.split("_")[0]
         leg = {
-            "side": req.side.value,
-            "quantity": str(req.quantity),
-            "symbol": req.symbol.upper(),
+            "instrument_type": "OPTION",
+            "market": market,
+            "symbol": req.symbol.upper(),  # underlying
+            "option_type": option_type,
             "strike_price": str(req.option_strike),
             "option_expire_date": req.option_expiry,
-            "option_type": "CALL" if req.instrument_type.value == "CALL_OPTION" else "PUT",
-            "instrument_type": "OPTION",
-            "market": self._market_category.split("_")[0],
+            "side": req.side.value,
+            "position_intent": intent,
+            "quantity": str(req.quantity),
+            "ratio": "1",
         }
-        if req.option_contract_symbol:
-            leg["option_symbol"] = req.option_contract_symbol
         payload: dict[str, Any] = {
             "client_order_id": req.client_order_id,
-            "symbol": req.symbol.upper(),
+            "combo_type": "NORMAL",
+            "option_strategy": req.option_strategy or "SINGLE",
             "instrument_type": "OPTION",
-            "option_strategy": req.option_strategy,
-            "order_type": req.order_type.value,
             "side": req.side.value,
+            "position_intent": intent,
+            "order_type": req.order_type.value,
             "quantity": str(req.quantity),
+            "support_trading_session": "N",
+            "entrust_type": "QTY",
             "time_in_force": req.time_in_force.value,
             "legs": [leg],
         }
@@ -554,36 +563,28 @@ class RealWebullAdapter:
 
     async def preview_option_order(self, request: OrderRequest) -> OrderPreview:
         await self._ensure()
-
-        def _call():
-            from webull.trade.request.v2.preview_option_request import PreviewOptionRequest
-
-            r = PreviewOptionRequest()
-            r.set_account_id(account_id=self._account_id)
-            r.set_new_orders(new_orders=[self._option_payload(request)])
-            return self._api.get_response(r)
-
-        data = _json(await self._dispatch(_call))
+        data = _json(
+            await self._dispatch(
+                self._orders.preview_order, self._account_id, [self._option_payload(request)]
+            )
+        )
         body = _first(data, "data", default=data) or {}
+        if isinstance(body, list) and body:
+            body = body[0]
         return OrderPreview(
             ok=True,
             estimated_cost=_first(body, "estimated_cost", "cost"),
-            estimated_commission=_first(body, "commission", "estimated_commission"),
+            estimated_commission=_first(body, "estimated_transaction_fee", "commission"),
             raw=body if isinstance(body, dict) else {},
         )
 
     async def place_option_order(self, request: OrderRequest) -> BrokerOrder:
         await self._ensure()
-
-        def _call():
-            from webull.trade.request.v2.place_option_request import PlaceOptionRequest
-
-            r = PlaceOptionRequest()
-            r.set_account_id(account_id=self._account_id)
-            r.set_new_orders(new_orders=[self._option_payload(request)])
-            return self._api.get_response(r)
-
-        data = _json(await self._dispatch(_call))
+        data = _json(
+            await self._dispatch(
+                self._orders.place_order, self._account_id, [self._option_payload(request)]
+            )
+        )
         body = _first(data, "data", default=data) or {}
         row = body[0] if isinstance(body, list) and body else body
         if not isinstance(row, dict):

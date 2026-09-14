@@ -22,7 +22,10 @@ from apm.decision.context import DecisionContext
 from apm.decision.contract import Decision, DecisionType, EntryPlan, ExitPlan
 from apm.domain import InstrumentType, OrderType, Side, TimeInForce
 from apm.observability import get_logger
+from apm.strategy.options import parse_contract_symbol, select_call_contract
 from apm.strategy.policy import SupervisorPolicy, load_active_policy
+
+_OPTION_TYPES = {InstrumentType.CALL_OPTION.value, InstrumentType.PUT_OPTION.value}
 
 log = get_logger("rules")
 
@@ -33,21 +36,29 @@ class QuantRuleProvider:
     """Deterministic decider. Same interface as the AI provider so it drops into the engine."""
 
     async def analyze(self, context: DecisionContext) -> Decision:
+        settings = get_settings()
         policy = await load_active_policy()
         tech = {t.symbol.upper(): t for t in context.technicals}
         positions = context.portfolio_state.get("positions", []) or []
-        held = {str(p["symbol"]).upper(): p for p in positions}
 
-        # 1) EXITS first — manage what we hold (equities only; options handled elsewhere).
-        for sym, pos in held.items():
-            t = tech.get(sym)
-            if t is None or not pos.get("quantity"):
+        # 1) EXITS first — manage what we hold (options by premium P&L, equities by levels).
+        for pos in positions:
+            if not pos.get("quantity"):
+                continue
+            if pos.get("instrument_type") in _OPTION_TYPES:
+                dec = _option_exit(context, pos, policy, settings)
+                if dec is not None:
+                    return dec
+                continue
+            t = tech.get(str(pos["symbol"]).upper())
+            if t is None:
                 continue
             reason = _exit_reason(t)
             if reason:
-                return _close(context, sym, reason, policy)
+                return _close(context, str(pos["symbol"]).upper(), reason, policy)
 
         # 2) ENTRIES — only if the supervisor permits and the regime corroborates longs.
+        held = {str(p["symbol"]).upper(): p for p in positions}
         block = _entry_block_reason(context, policy, held)
         if block:
             return _wait(context, block, policy)
@@ -55,6 +66,13 @@ class QuantRuleProvider:
         candidate = _rank_entry(context, policy, held)
         if candidate is None:
             return _wait(context, "no momentum setup with acceptable reward:risk", policy)
+
+        # Model B: on a small account, express the bullish setup as a defined-risk long CALL.
+        if settings.options_enabled:
+            dec = _option_entry(context, candidate, policy, settings)
+            if dec is not None:
+                return dec
+            return _wait(context, f"{candidate.symbol}: no affordable/liquid ATM call", policy)
 
         qty, sizing_note = _size(context, candidate, policy)
         if qty < 1:
@@ -165,6 +183,91 @@ def _buy(context, t, qty: int, policy: SupervisorPolicy, sizing_note: str) -> De
         ),
         opportunities_considered=_considered(context),
         selected_opportunity=t.symbol,
+    )
+
+
+def _option_entry(context, t, policy: SupervisorPolicy, settings) -> Decision | None:
+    """Model B: buy a defined-risk ATM-ish CALL on the bullish momentum name (1 contract)."""
+    chain = (context.option_chains or {}).get(t.symbol.upper()) or []
+    if not chain:
+        return None
+    nav = context.portfolio_state.get("portfolio_value") or context.buying_power
+    max_cost = min(context.buying_power, nav * settings.option_max_premium_pct_nav / 100.0)
+    c = select_call_contract(
+        chain,
+        max_cost=max_cost,
+        delta_min=settings.option_delta_min,
+        delta_max=settings.option_delta_max,
+        max_spread_pct=settings.option_max_spread_pct,
+    )
+    if c is None:
+        return None
+    qty = settings.option_max_contracts
+    tp = round((c["mid"] or c["ask"]) * (1 + settings.option_take_profit_pct / 100.0), 2)
+    sl = round((c["mid"] or c["bid"]) * (1 - settings.option_stop_loss_pct / 100.0), 2)
+    return Decision(
+        decision_type=DecisionType.BUY,
+        portfolio_id=context.portfolio_id,
+        symbol=t.symbol,
+        instrument_type=InstrumentType.CALL_OPTION,
+        action=Side.BUY,
+        quantity=qty,
+        option_strike=c["strike"],
+        option_expiry=c["expiry"],
+        thesis=(
+            f"Model B: {t.symbol} bullish (mom {t.momentum_5}% , trend up, regime "
+            f"{(context.breadth or {}).get('regime')}). Long {c['strike']}C {c['expiry']} "
+            f"delta {c.get('delta')}, IV {c.get('iv')}, cost ${c.get('cost')}."
+        ),
+        entry_plan=EntryPlan(type=OrderType.LIMIT, price=c["ask"], time_in_force=TimeInForce.DAY),
+        exit_plan=ExitPlan(
+            type="CONDITIONAL",
+            take_profit=tp,
+            stop_loss=sl,
+            note=(
+                f"+{settings.option_take_profit_pct}% TP / -{settings.option_stop_loss_pct}% SL "
+                "on premium; flatten before close regardless (0DTE-safe)."
+            ),
+        ),
+        invalidation_condition=f"premium -{settings.option_stop_loss_pct}% or underlying reverses",
+        expected_outcome=f"premium +{settings.option_take_profit_pct}% on continuation",
+        confidence=0.7,
+        reasoning_summary=(
+            f"[QUANT-B] BUY {qty} {t.symbol} {c['strike']}C {c['expiry']} @ {c['ask']} "
+            f"(delta {c.get('delta')}, cost ${c.get('cost')}). Policy regime={policy.regime}."
+        ),
+        opportunities_considered=_considered(context),
+        selected_opportunity=f"{t.symbol} {c['strike']}C",
+    )
+
+
+def _option_exit(context, pos: dict, policy: SupervisorPolicy, settings) -> Decision | None:
+    """Sell a held option to close on premium TP/SL. Parses the contract to build the order."""
+    avg = pos.get("avg_price")
+    mark = pos.get("market_price")
+    qty = abs(pos.get("quantity") or 0)
+    if not avg or mark is None or qty < 1:
+        return None  # can't evaluate P&L; EOD flatten is the backstop
+    pnl_pct = (mark / avg - 1) * 100
+    if pnl_pct < settings.option_take_profit_pct and pnl_pct > -settings.option_stop_loss_pct:
+        return None  # still within the band — hold
+    parsed = parse_contract_symbol(str(pos["symbol"]))
+    if parsed is None:
+        return None  # can't parse — EOD flatten will handle it
+    tag = "take-profit" if pnl_pct >= settings.option_take_profit_pct else "stop-loss"
+    return Decision(
+        decision_type=DecisionType.SELL,
+        portfolio_id=context.portfolio_id,
+        symbol=parsed["underlying"],
+        instrument_type=parsed["instrument_type"],
+        action=Side.SELL,
+        quantity=qty,
+        option_strike=parsed["strike"],
+        option_expiry=parsed["expiry"],
+        thesis=f"Exit {pos['symbol']} ({tag}, premium {pnl_pct:+.0f}%).",
+        confidence=0.7,
+        reasoning_summary=f"[QUANT-B] SELL to close {pos['symbol']} — {tag} at {pnl_pct:+.0f}%.",
+        opportunities_considered=_considered(context),
     )
 
 
