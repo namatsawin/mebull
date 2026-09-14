@@ -7,7 +7,8 @@ from sqlalchemy import select
 from apm.config import get_settings
 from apm.db import session_scope
 from apm.db.models import Decision as DecisionRow
-from apm.decision.context import ContextQuote, DecisionContext
+from apm.decision.context import ContextQuote, DecisionContext, Technicals
+from apm.domain import Bar
 from apm.learning.evaluator import LearningService
 from apm.memory.service import MemoryService
 from apm.observability import get_logger
@@ -58,6 +59,11 @@ class ContextBuilder:
                 market_snapshot["market_data_error"] = str(exc)
                 log.warning("context.quotes_unavailable", error=str(exc))
 
+        # Deterministic technical levels per symbol (support/stop, trend, volatility) so the AI
+        # can build a risk-defined entry. Degrades gracefully if bars are unavailable (§37).
+        technicals = await self._technicals([q.symbol for q in quotes])
+        breadth = _breadth(quotes)
+
         option_chains: dict[str, list[dict]] = {}
         if settings.options_enabled:
             option_chains = await self._affordable_options(watchlist, state.buying_power)
@@ -74,6 +80,8 @@ class ContextBuilder:
             buying_power=state.buying_power,
             watchlist=watchlist,
             quotes=quotes,
+            technicals=technicals,
+            breadth=breadth,
             option_chains=option_chains,
             market_snapshot=market_snapshot,
             discovery=discovery,
@@ -82,6 +90,21 @@ class ContextBuilder:
             known_failures=await self._memory.recall(category="FAILURE", limit=10),
             scorecard=await self._learning.build_scorecard(),
         )
+
+    async def _technicals(self, symbols: list[str]) -> list[Technicals]:
+        """Compute per-symbol technical levels from historical bars. Deterministic; degrades
+        gracefully per symbol if bars are unavailable/unsubscribed (spec §37)."""
+        out: list[Technicals] = []
+        for sym in symbols:
+            try:
+                bars = await self._adapter.get_historical_bars(sym, timespan="d", count=60)
+            except Exception as exc:  # noqa: BLE001 - bar data may be down/unsubscribed
+                log.warning("context.bars_unavailable", symbol=sym, error=str(exc))
+                continue
+            t = _compute_technicals(sym, bars)
+            if t is not None:
+                out.append(t)
+        return out
 
     async def _affordable_options(
         self, symbols: list[str], buying_power: float, per_symbol: int = 6
@@ -131,3 +154,79 @@ class ContextBuilder:
             }
             for r in rows
         ]
+
+
+def _sma(values: list[float], n: int) -> float | None:
+    if len(values) < n:
+        return None
+    return round(sum(values[-n:]) / n, 2)
+
+
+def _compute_technicals(symbol: str, bars: list[Bar]) -> Technicals | None:
+    """Pure: derive support/resistance/trend/volatility from daily bars (spec §45-46)."""
+    if not bars:
+        return None
+    closes = [b.close for b in bars]
+    last = closes[-1]
+    window = bars[-20:] if len(bars) >= 20 else bars
+    support = round(min(b.low for b in window), 2)
+    resistance = round(max(b.high for b in window), 2)
+    sma20 = _sma(closes, 20)
+    sma50 = _sma(closes, 50)
+
+    # ATR% proxy: mean daily range over last ~14 bars, as a % of last price.
+    rng = [(b.high - b.low) for b in bars[-14:]]
+    atr_pct = round((sum(rng) / len(rng)) / last * 100, 2) if rng and last else None
+
+    momentum_5 = (
+        round((last / closes[-6] - 1) * 100, 2) if len(closes) >= 6 and closes[-6] else None
+    )
+
+    trend = "flat"
+    if sma20 is not None and sma50 is not None:
+        if last > sma20 > sma50:
+            trend = "up"
+        elif last < sma20 < sma50:
+            trend = "down"
+    elif sma20 is not None:
+        trend = "up" if last > sma20 else "down"
+
+    return Technicals(
+        symbol=symbol.upper(),
+        last=round(last, 2),
+        sma20=sma20,
+        sma50=sma50,
+        support=support,
+        resistance=resistance,
+        pct_to_support=round((last / support - 1) * 100, 2) if support else None,
+        pct_to_resistance=round((resistance / last - 1) * 100, 2) if last else None,
+        atr_pct=atr_pct,
+        momentum_5=momentum_5,
+        trend=trend,
+    )
+
+
+def _breadth(quotes: list[ContextQuote]) -> dict:
+    """Pure: market breadth summary from quote change_pct — the corroboration read a PM uses."""
+    changes = [q.change_pct for q in quotes if q.change_pct is not None]
+    if not changes:
+        return {}
+    advancers = sum(1 for c in changes if c > 0)
+    decliners = sum(1 for c in changes if c < 0)
+    avg = round(sum(changes) / len(changes), 2)
+    if advancers and not decliners:
+        regime = "risk_on"
+    elif decliners and not advancers:
+        regime = "risk_off"
+    elif avg > 0.1:
+        regime = "risk_on_tilt"
+    elif avg < -0.1:
+        regime = "risk_off_tilt"
+    else:
+        regime = "mixed"
+    return {
+        "advancers": advancers,
+        "decliners": decliners,
+        "avg_change_pct": avg,
+        "regime": regime,
+    }
