@@ -59,11 +59,20 @@ forward-test, not proof.
 - Never claim a "proven" or "guaranteed" edge. Frame everything as evidence + hypothesis.
 - If Yahoo fails / bad ticker, report it plainly and stop (don't fabricate numbers).
 
-## Signals tested (all bullish long, computed no-look-ahead)
-- `opening_range` — break of the first-30m high (ORB)
-- `donchian_breakout` — new 20-bar high
-- `momentum_volz` — 5m volume z-score ≥ 2 + up momentum/trend (the current Model B trigger)
-- `rsi_oversold` — RSI(14) < 25 (mean-reversion bounce)
-- `big_green_vol` — large green candle + volume spike
+## Output has TWO tables
+1. **STRATEGY ROLLUP** (read this first) — per-signal aggregate across ALL tickers: total
+   trades, avg edge, and **Leads x/y** = on how many tickers it's a 🟢 lead. This is the
+   anti-overfitting view: a signal that leads on *many* tickers is a real edge; a lone winner
+   among ~20 signals is likely data-mining. Prefer high `Leads x/y`, not the single best row.
+2. **PER STOCK × STRATEGY** — the detail rows (positives/leads), sorted by edge.
 
-To add/adjust signals, edit `scripts/find_edge.py` (`_signals`).
+## Signals tested (~20, all bullish long, no-look-ahead)
+Trend/momentum: `momentum_volz`, `ema9_21_cross`, `macd_cross`, `vwap_reclaim`,
+`higher_high_low`. Breakout: `donchian20_break`, `opening_range`, `prior_day_high_break`,
+`bollinger_break_up`. Mean-reversion: `rsi_oversold_25/30`, `stoch_oversold`, `vwap_dev_low`,
+`bollinger_lower_revert`, `gap_down_fade`. Volume/vol: `big_green_vol`, `rvol_surge`,
+`atr_expansion_up`. Time-of-day: `power_hour_mom`, `opening_drive`.
+
+Empirically (this universe, 60d): the **mean-reversion family leads across most tickers**;
+trend/breakout/momentum consistently show no edge. To add/adjust, edit
+`scripts/find_edge.py` (`_signals_at`).
