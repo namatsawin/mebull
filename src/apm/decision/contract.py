@@ -14,6 +14,12 @@ from pydantic import BaseModel, Field, model_validator
 from apm.domain import InstrumentType, OrderType, Side, TimeInForce
 
 
+def decision_json_schema() -> dict:
+    """JSON Schema for the decision contract — used for Anthropic tool-use enforcement
+    and written to claude/decision-schema.json."""
+    return Decision.model_json_schema()
+
+
 class DecisionType(StrEnum):
     BUY = "BUY"
     SELL = "SELL"

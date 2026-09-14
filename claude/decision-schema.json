@@ -1,38 +1,343 @@
 {
-  "$comment": "PLACEHOLDER. The authoritative decision contract is generated at milestone M4 from the pydantic model in src/apm/decision/ (Decision -> JSON Schema, enforced via Anthropic tool-use). This file documents the intended shape (spec §17, §40).",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Decision",
-  "type": "object",
-  "required": ["decision_type", "portfolio_id", "confidence", "reasoning_summary"],
+  "$defs": {
+    "DecisionType": {
+      "enum": [
+        "BUY",
+        "SELL",
+        "CLOSE",
+        "HOLD",
+        "WAIT",
+        "REBALANCE",
+        "RESEARCH",
+        "EXPERIMENT"
+      ],
+      "title": "DecisionType",
+      "type": "string"
+    },
+    "EntryPlan": {
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/OrderType",
+          "default": "LIMIT"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Price"
+        },
+        "time_in_force": {
+          "$ref": "#/$defs/TimeInForce",
+          "default": "DAY"
+        }
+      },
+      "title": "EntryPlan",
+      "type": "object"
+    },
+    "ExitPlan": {
+      "properties": {
+        "type": {
+          "default": "CONDITIONAL",
+          "title": "Type",
+          "type": "string"
+        },
+        "take_profit": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Take Profit"
+        },
+        "stop_loss": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stop Loss"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "title": "ExitPlan",
+      "type": "object"
+    },
+    "InstrumentType": {
+      "enum": [
+        "STOCK",
+        "ETF",
+        "CALL_OPTION",
+        "PUT_OPTION"
+      ],
+      "title": "InstrumentType",
+      "type": "string"
+    },
+    "OrderType": {
+      "enum": [
+        "MARKET",
+        "LIMIT",
+        "STOP_LOSS",
+        "STOP_LOSS_LIMIT"
+      ],
+      "title": "OrderType",
+      "type": "string"
+    },
+    "RejectedOpportunity": {
+      "properties": {
+        "symbol": {
+          "title": "Symbol",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Price"
+        }
+      },
+      "required": [
+        "symbol",
+        "reason"
+      ],
+      "title": "RejectedOpportunity",
+      "type": "object"
+    },
+    "Side": {
+      "enum": [
+        "BUY",
+        "SELL",
+        "SHORT"
+      ],
+      "title": "Side",
+      "type": "string"
+    },
+    "TimeInForce": {
+      "enum": [
+        "DAY",
+        "GTC",
+        "IOC"
+      ],
+      "title": "TimeInForce",
+      "type": "string"
+    }
+  },
+  "description": "A single structured decision. WAIT is first-class (spec \u00a715).",
   "properties": {
     "decision_type": {
-      "type": "string",
-      "enum": ["BUY", "SELL", "CLOSE", "HOLD", "WAIT", "REBALANCE", "RESEARCH", "EXPERIMENT"]
+      "$ref": "#/$defs/DecisionType"
     },
-    "portfolio_id": { "type": "string" },
-    "symbol": { "type": ["string", "null"] },
-    "instrument_type": { "type": ["string", "null"], "enum": ["STOCK", "OPTION", null] },
-    "action": { "type": ["string", "null"], "enum": ["BUY", "SELL", null] },
-    "quantity": { "type": ["number", "null"] },
-    "thesis": { "type": ["string", "null"] },
-    "entry_plan": { "type": ["object", "null"] },
-    "exit_plan": { "type": ["object", "null"] },
-    "invalidation_condition": { "type": ["string", "null"] },
-    "expected_holding_period": { "type": ["string", "null"] },
-    "expected_outcome": { "type": ["string", "null"] },
-    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-    "reasoning_summary": { "type": "string" },
-    "opportunities_considered": { "type": "array", "items": { "type": "string" } },
-    "rejected_opportunities": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "symbol": { "type": "string" },
-          "reason": { "type": "string" }
+    "portfolio_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
         }
-      }
+      ],
+      "default": null,
+      "title": "Portfolio Id"
     },
-    "alternatives_considered": { "type": "array", "items": { "type": "string" } }
-  }
+    "symbol": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Symbol"
+    },
+    "instrument_type": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/InstrumentType"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "action": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Side"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "quantity": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Quantity"
+    },
+    "thesis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Thesis"
+    },
+    "entry_plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntryPlan"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "exit_plan": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExitPlan"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "invalidation_condition": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Invalidation Condition"
+    },
+    "expected_outcome": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expected Outcome"
+    },
+    "expected_holding_period": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expected Holding Period"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "reasoning_summary": {
+      "title": "Reasoning Summary",
+      "type": "string"
+    },
+    "opportunities_considered": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Opportunities Considered",
+      "type": "array"
+    },
+    "selected_opportunity": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Selected Opportunity"
+    },
+    "rejected_opportunities": {
+      "items": {
+        "$ref": "#/$defs/RejectedOpportunity"
+      },
+      "title": "Rejected Opportunities",
+      "type": "array"
+    },
+    "alternatives_considered": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Alternatives Considered",
+      "type": "array"
+    }
+  },
+  "required": [
+    "decision_type",
+    "confidence",
+    "reasoning_summary"
+  ],
+  "title": "Decision",
+  "type": "object"
 }
