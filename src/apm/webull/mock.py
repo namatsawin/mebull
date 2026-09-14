@@ -67,13 +67,16 @@ class MockWebullAdapter:
         return self._prices.setdefault(symbol.upper(), round(_seed_price(symbol), 2))
 
     def _drifted(self, symbol: str, step: int) -> float:
-        """Price at a given step. In volatile mode it oscillates ~±6% around the base with a
-        per-symbol phase, giving deterministic momentum for practice trading."""
+        """Price at a given step. In volatile mode each symbol gets a deterministic directional
+        trend plus an oscillation, so practice shows clear momentum the AI can act on."""
         base = self._base(symbol)
         if not self._volatile:
             return base
-        phase = (int(hashlib.sha256(symbol.encode()).hexdigest(), 16) % 628) / 100.0
-        return round(base * (1 + 0.06 * math.sin(0.5 * step + phase)), 2)
+        h = int(hashlib.sha256(symbol.encode()).hexdigest(), 16)
+        phase = (h % 628) / 100.0
+        trend = ((h >> 8) % 5 - 2) * 0.008  # per-symbol drift: -1.6%..+1.6% per step
+        osc = 0.05 * math.sin(0.6 * step + phase)
+        return round(max(1.0, base * (1 + trend * step + osc)), 2)
 
     def _price(self, symbol: str) -> float:
         return self._drifted(symbol, self._step)
