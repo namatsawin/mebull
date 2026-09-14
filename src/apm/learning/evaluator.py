@@ -23,6 +23,20 @@ from apm.webull.adapter import WebullAdapter
 
 log = get_logger("learning")
 
+# Words Claude may list as "opportunities considered" that are actions/states, not tickers.
+_NON_TICKERS = {
+    "WAIT", "HOLD", "CASH", "NONE", "N/A", "BUY", "SELL", "CLOSE", "SHORT",
+    "REBALANCE", "RESEARCH", "EXPERIMENT",
+}
+
+
+def _is_ticker(sym: str) -> bool:
+    """Cheap sanity filter so non-ticker strings never reach the quote API."""
+    s = sym.strip().upper()
+    if s in _NON_TICKERS:
+        return False
+    return s.replace(".", "").isalpha() and 1 <= len(s) <= 6
+
 
 class LearningService:
     def __init__(self, adapter: WebullAdapter) -> None:
@@ -40,11 +54,23 @@ class LearningService:
             if not rows:
                 return 0
 
-            symbols = sorted({r.candidate_symbol for r in rows if r.candidate_symbol})
+            # Claude sometimes lists non-tickers (e.g. "WAIT"/"CASH") among the opportunities
+            # it considered; those must not be sent to the quote API (one bad symbol 417s the
+            # whole batch and blocks all counterfactual learning).
+            symbols = sorted(
+                {
+                    r.candidate_symbol
+                    for r in rows
+                    if r.candidate_symbol and _is_ticker(r.candidate_symbol)
+                }
+            )
             prices: dict[str, float] = {}
             if symbols:
-                for q in await self._adapter.get_quotes(symbols):
-                    prices[q.symbol] = q.price
+                try:
+                    for q in await self._adapter.get_quotes(symbols):
+                        prices[q.symbol] = q.price
+                except Exception as exc:  # noqa: BLE001 - never let learning break the loop
+                    log.warning("learning.quotes_failed", error=str(exc), symbols=symbols)
 
             evaluated = 0
             now = dt.datetime.now(dt.UTC)
