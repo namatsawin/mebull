@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from apm.domain import InstrumentType, OrderType, Side, TimeInForce
 
@@ -80,6 +80,19 @@ class Decision(BaseModel):
     selected_opportunity: str | None = None
     rejected_opportunities: list[RejectedOpportunity] = Field(default_factory=list)
     alternatives_considered: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "opportunities_considered", "alternatives_considered", mode="before"
+    )
+    @classmethod
+    def _coerce_str_list(cls, v):
+        # LLMs sometimes return these as a comma-separated string instead of a JSON array,
+        # even with tool-use schema enforcement — accept both.
+        if v is None:
+            return []
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return v
 
     @model_validator(mode="after")
     def _coherent(self) -> Decision:

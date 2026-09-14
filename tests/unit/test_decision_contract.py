@@ -40,6 +40,17 @@ def test_confidence_bounds_enforced():
         Decision(decision_type=DecisionType.HOLD, confidence=1.5, reasoning_summary="x")
 
 
+def test_coerces_comma_separated_string_lists():
+    # LLMs sometimes return list fields as a CSV string; the contract should accept both.
+    d = Decision(
+        decision_type=DecisionType.WAIT, confidence=0.7, reasoning_summary="x",
+        opportunities_considered="SPY, QQQ, IWM",
+        alternatives_considered="BUY IWM, WAIT",
+    )
+    assert d.opportunities_considered == ["SPY", "QQQ", "IWM"]
+    assert d.alternatives_considered == ["BUY IWM", "WAIT"]
+
+
 def test_places_order_flag():
     assert DecisionType.BUY.places_order
     assert DecisionType.CLOSE.places_order
