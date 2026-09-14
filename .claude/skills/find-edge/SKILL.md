@@ -1,0 +1,58 @@
+---
+name: find-edge
+description: Research whether a specific stock has a statistical intraday trading edge before trading it. Use when the user wants to find/validate an edge for a ticker (e.g. "find edge for NVDA", "does AAPL have an edge", "check TSLA before I trade"). Asks for the ticker if not given, runs a no-look-ahead signal panel with an option-relevant barrier metric + train/test split over Yahoo data, and reports an honest verdict (edge vs no-edge, with caveats). Never enables real trading.
+---
+
+# Find Edge for a Stock
+
+Purpose: given a ticker, determine whether any simple intraday signal has a *statistical edge*
+on that stock — BEFORE risking money. This encodes the honest research workflow: markets are
+mostly efficient, so the default expectation is "no edge," and any winner is a hypothesis to
+forward-test, not proof.
+
+## Steps
+
+1. **Get the ticker(s).** If the user didn't name a stock, ask: "Which stock(s)? (e.g. NVDA)".
+   Accept one or many. (ETFs work too, but note ORB rarely triggers on ETFs.)
+
+2. **Run the edge finder** (offline, free Yahoo data, no orders):
+   ```bash
+   uv run python scripts/find_edge.py <TICKER> [<TICKER> ...]
+   ```
+   Optional knobs: `--barrier 1.0` (the ±% first-touch move; default 0.8) and `--horizon 12`
+   (5m bars ahead; default 12 = 60 min). Larger barrier = a bigger move must happen (harder,
+   but more meaningful for options which pay spread+theta).
+
+3. **Interpret honestly** (this is the important part — do NOT hype):
+   - The table shows each signal's `P(up first)` = probability price hits +barrier% before
+     −barrier% within the horizon, its `edge` vs baseline, and `train`/`test` (first vs last
+     half of the window).
+   - **Real lead** (worth forward-testing): `edge` clearly positive (≈ +3–5% or more) AND
+     decent `n` (≥ ~30) AND `train ≈ test` (persists out-of-sample). The script marks these
+     `<-- lead`.
+   - **No edge**: edge ≈ 0 or negative, or `P(up)` below baseline, or huge train/test gap
+     (overfit/noise), or tiny `n`.
+   - Always state the caveats: small sample (~60 trading days of 5m), we test several signals
+     (multiple-comparison risk), and this is the *underlying* — a long option needs the move to
+     beat spread (~5%) + theta, so a marginal underlying edge ≈ negative after option costs.
+
+4. **Recommend next step:**
+   - If a lead survives: propose a **forward test** (paper, out-of-sample by time) before any
+     real money — re-slicing the same 60 days is not confirmation.
+   - If nothing survives: say so plainly ("no edge found — don't trade it"). That's a valid,
+     valuable result.
+
+## Hard rules
+- This skill NEVER enables real trading, changes `APM_TRADING_ENABLED`, or places orders. It is
+  research only.
+- Never claim a "proven" or "guaranteed" edge. Frame everything as evidence + hypothesis.
+- If Yahoo fails / bad ticker, report it plainly and stop (don't fabricate numbers).
+
+## Signals tested (all bullish long, computed no-look-ahead)
+- `opening_range` — break of the first-30m high (ORB)
+- `donchian_breakout` — new 20-bar high
+- `momentum_volz` — 5m volume z-score ≥ 2 + up momentum/trend (the current Model B trigger)
+- `rsi_oversold` — RSI(14) < 25 (mean-reversion bounce)
+- `big_green_vol` — large green candle + volume spike
+
+To add/adjust signals, edit `scripts/find_edge.py` (`_signals`).
