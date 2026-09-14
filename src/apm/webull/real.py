@@ -33,6 +33,9 @@ from apm.observability import get_logger
 
 log = get_logger("webull.real")
 
+# Market prefix (from the category, e.g. "US_STOCK" -> "US") to its trading currency.
+_MARKET_CURRENCY = {"US": "USD", "HK": "HKD", "CN": "CNH", "TH": "THB"}
+
 _STATUS_MAP = {
     "SUBMITTED": OrderStatus.SUBMITTED,
     "PENDING": OrderStatus.PENDING,
@@ -167,12 +170,27 @@ class RealWebullAdapter:
         await self._ensure()
         data = _json(await self._dispatch(self._account.get_account_balance, self._account_id))
         body = _first(data, "data", default=data)
+        # Webull returns a base-currency total plus a per-currency breakdown
+        # (account_currency_assets). We trade in the market's currency (US -> USD), so use
+        # that sub-account's buying power; fall back to the base-currency totals.
+        currency = _MARKET_CURRENCY.get(self._market_category.split("_")[0], "USD")
+        assets = body.get("account_currency_assets") if isinstance(body, dict) else None
+        sub = next((a for a in (assets or []) if a.get("currency") == currency), None)
+        if sub:
+            cash = _f(sub.get("cash_balance"))
+            buying_power = _f(sub.get("buying_power"))
+            market_value = _f(sub.get("market_value"))
+        else:
+            cash = _f(_first(body, "total_cash_balance", "cash_balance", "cash"))
+            buying_power = _f(_first(body, "buying_power", "day_buying_power")) or cash
+            market_value = _f(_first(body, "total_market_value", "net_liquidation"))
+            currency = _first(body, "total_asset_currency", "currency", default="USD")
         return AccountBalance(
             account_id=self._account_id or "",
-            cash=_f(_first(body, "cash_balance", "cashBalance", "cash")),
-            buying_power=_f(_first(body, "buying_power", "buyingPower", "day_buying_power")),
-            total_value=_f(_first(body, "net_liquidation", "total_asset", "totalAsset")),
-            currency=_first(body, "currency", default="USD"),
+            cash=cash,
+            buying_power=buying_power,
+            total_value=market_value + cash,
+            currency=currency,
             as_of=dt.datetime.now(dt.UTC),
         )
 
