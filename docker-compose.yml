@@ -27,6 +27,10 @@ services:
     environment:
       # Override so the app reaches Postgres via the compose network host `db`.
       APM_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-apm}:${POSTGRES_PASSWORD:-apm}@db:5432/${POSTGRES_DB:-apm}
+    volumes:
+      # Reuse the verified Webull access token (conf/token.txt) so the container doesn't
+      # re-run the interactive token-verify flow. Contains a secret — gitignored.
+      - ./conf:/app/conf
     ports:
       - "8080:8080"
     healthcheck:
