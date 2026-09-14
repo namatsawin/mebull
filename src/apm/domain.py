@@ -107,6 +107,11 @@ class Quote(BaseModel):
     ask: float | None = None
     volume: float | None = None
     change_pct: float | None = None
+    # Intraday snapshot fields (used to derive technicals when a bars endpoint is unavailable).
+    day_open: float | None = None
+    day_high: float | None = None
+    day_low: float | None = None
+    prev_close: float | None = None
     as_of: dt.datetime
 
 

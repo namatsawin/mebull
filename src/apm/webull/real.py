@@ -266,6 +266,8 @@ class RealWebullAdapter:
         rows = rows if isinstance(rows, list) else [rows]
         out: list[Quote] = []
         for r in rows:
+            change_ratio = _first(r, "change_ratio")
+            change_pct = _f(change_ratio) * 100 if change_ratio is not None else None
             out.append(
                 Quote(
                     symbol=str(_first(r, "symbol", "ticker", default="")).upper(),
@@ -273,6 +275,11 @@ class RealWebullAdapter:
                     bid=_first(r, "bid_price", "bid"),
                     ask=_first(r, "ask_price", "ask"),
                     volume=_first(r, "volume"),
+                    change_pct=round(change_pct, 2) if change_pct is not None else None,
+                    day_open=_first(r, "open"),
+                    day_high=_first(r, "high"),
+                    day_low=_first(r, "low"),
+                    prev_close=_first(r, "pre_close", "prev_close", "close"),
                     as_of=dt.datetime.now(dt.UTC),
                 )
             )

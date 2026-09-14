@@ -141,8 +141,17 @@ class MockWebullAdapter:
         px = self._price(symbol)
         change_pct = None
         if self._volatile:
-            prev = self._drifted(symbol, self._step - 1)
-            change_pct = round((px / prev - 1) * 100, 2) if prev else None
+            lo = max(0, self._step - 5)
+            window = [self._drifted(symbol, s) for s in range(lo, self._step + 1)]
+            day_high = round(max(window), 2)
+            day_low = round(min(window), 2)
+            day_open = round(window[0], 2)
+            prev_close = round(self._drifted(symbol, max(0, self._step - 6)), 2)
+            change_pct = round((px / prev_close - 1) * 100, 2) if prev_close else None
+        else:
+            day_high, day_low, day_open, prev_close = (
+                round(px * 1.005, 2), round(px * 0.995, 2), px, px,
+            )
         return Quote(
             symbol=symbol.upper(),
             price=px,
@@ -150,6 +159,10 @@ class MockWebullAdapter:
             ask=round(px * 1.001, 2),
             volume=1_000_000,
             change_pct=change_pct,
+            day_open=day_open,
+            day_high=day_high,
+            day_low=day_low,
+            prev_close=prev_close,
             as_of=self._now,
         )
 

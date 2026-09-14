@@ -49,13 +49,15 @@ class ContextBuilder:
             )
         )
         quotes: list[ContextQuote] = []
+        raw_quotes: list = []
         market_snapshot: dict = {}
         if symbols:
             try:
-                for q in await self._adapter.get_quotes(symbols):
-                    quotes.append(
-                        ContextQuote(symbol=q.symbol, price=q.price, change_pct=q.change_pct)
-                    )
+                raw_quotes = await self._adapter.get_quotes(symbols)
+                quotes = [
+                    ContextQuote(symbol=q.symbol, price=q.price, change_pct=q.change_pct)
+                    for q in raw_quotes
+                ]
             except Exception as exc:  # noqa: BLE001 - market data may be down/unsubscribed
                 # Degrade gracefully (spec §37): keep reasoning/journaling; the Safety Guard
                 # blocks new orders when market data is unavailable.
@@ -63,8 +65,9 @@ class ContextBuilder:
                 log.warning("context.quotes_unavailable", error=str(exc))
 
         # Deterministic technical levels per symbol (support/stop, trend, volatility) so the AI
-        # can build a risk-defined entry. Degrades gracefully if bars are unavailable (§37).
-        technicals = await self._technicals([q.symbol for q in quotes])
+        # can build a risk-defined entry. Prefer the intraday snapshot (day high/low/open/prev
+        # close); fall back to bars. Degrades gracefully if neither is available (§37).
+        technicals = await self._technicals(raw_quotes)
         breadth = _breadth(quotes)
 
         option_chains: dict[str, list[dict]] = {}
@@ -95,19 +98,24 @@ class ContextBuilder:
             scorecard=await self._learning.build_scorecard(),
         )
 
-    async def _technicals(self, symbols: list[str]) -> list[Technicals]:
-        """Compute per-symbol technical levels from historical bars. Deterministic; degrades
-        gracefully per symbol if bars are unavailable/unsubscribed (spec §37)."""
+    async def _technicals(self, quotes: list) -> list[Technicals]:
+        """Per-symbol technical levels. Prefer the intraday snapshot (day high/low/open/prev
+        close — always available with quotes); fall back to historical bars if a quote lacks
+        range fields. Deterministic; degrades gracefully per symbol (spec §37)."""
         out: list[Technicals] = []
-        for sym in symbols:
-            try:
-                bars = await self._adapter.get_historical_bars(sym, timespan="d", count=60)
-            except Exception as exc:  # noqa: BLE001 - bar data may be down/unsubscribed
-                log.warning("context.bars_unavailable", symbol=sym, error=str(exc))
-                continue
-            t = _compute_technicals(sym, bars)
+        for q in quotes:
+            t = _compute_technicals_from_quote(q)
             if t is not None:
                 out.append(t)
+                continue
+            try:
+                bars = await self._adapter.get_historical_bars(q.symbol, timespan="d", count=60)
+            except Exception as exc:  # noqa: BLE001 - bar data may be down/unsubscribed
+                log.warning("context.bars_unavailable", symbol=q.symbol, error=str(exc))
+                continue
+            bt = _compute_technicals(q.symbol, bars)
+            if bt is not None:
+                out.append(bt)
         return out
 
     async def _affordable_options(
@@ -192,6 +200,43 @@ def _mandate(settings) -> dict:
         else:
             m["close_directive"] = "Intraday only: any position you open must be closed today."
     return m
+
+
+def _compute_technicals_from_quote(q) -> Technicals | None:
+    """Pure: derive intraday technicals from a snapshot quote (day high/low/open/prev close).
+    Ideal for day trading — the day's range gives natural intraday support/resistance and a
+    volatility read without any bars endpoint. Returns None if the range fields are absent."""
+    last = getattr(q, "price", None)
+    high = getattr(q, "day_high", None)
+    low = getattr(q, "day_low", None)
+    if not last or high is None or low is None or high <= 0 or low <= 0:
+        return None
+    day_open = getattr(q, "day_open", None)
+    prev_close = getattr(q, "prev_close", None)
+    atr_pct = round((high - low) / last * 100, 2) if last else None
+    # Intraday trend from price vs the open and prior close (breadth of the day's move).
+    trend = "flat"
+    refs = [r for r in (day_open, prev_close) if r]
+    if refs and all(last > r for r in refs):
+        trend = "up"
+    elif refs and all(last < r for r in refs):
+        trend = "down"
+    momentum_5 = (
+        round((last / day_open - 1) * 100, 2) if day_open else getattr(q, "change_pct", None)
+    )
+    return Technicals(
+        symbol=str(getattr(q, "symbol", "")).upper(),
+        last=round(last, 2),
+        sma20=None,
+        sma50=None,
+        support=round(low, 2),
+        resistance=round(high, 2),
+        pct_to_support=round((last / low - 1) * 100, 2),
+        pct_to_resistance=round((high / last - 1) * 100, 2),
+        atr_pct=atr_pct,
+        momentum_5=momentum_5,
+        trend=trend,
+    )
 
 
 def _sma(values: list[float], n: int) -> float | None:
