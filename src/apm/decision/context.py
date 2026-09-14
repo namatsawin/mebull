@@ -41,6 +41,9 @@ class DecisionContext(BaseModel):
 
     portfolio_state: dict = Field(default_factory=dict)
     buying_power: float = 0.0
+    # Trading mandate surfaced each cycle: style (daytrade/scalp/swing), intraday-flat rule,
+    # minutes to the close, and per-trade risk guidance. Deterministic — from config + clock.
+    mandate: dict = Field(default_factory=dict)
 
     watchlist: list[str] = Field(default_factory=list)
     quotes: list[ContextQuote] = Field(default_factory=list)

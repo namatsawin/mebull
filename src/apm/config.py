@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     # Skip cycles when the US market is closed (weekends/holidays/after-hours). The biggest
     # cost saver. Set false for local dev/testing so the loop runs any time.
     market_hours_only: bool = True
+
+    # --- Trading style / horizon --------------------------------------------
+    # The trader's mandate, surfaced to the AI each cycle. "daytrade"/"scalp" bias toward
+    # active intraday trading; "swing" allows multi-day holds. Informational for the model —
+    # the hard intraday-flat guarantee below is enforced deterministically by the loop.
+    trading_style: str = "daytrade"
+    # Intraday-only: never hold overnight. The loop force-flattens all open positions once the
+    # session is within `flatten_before_close_minutes` of the close (safe, deterministic).
+    intraday_only: bool = True
+    flatten_before_close_minutes: int = 15
+    # Soft guidance to the model: risk at most this % of buying power on a single trade.
+    max_risk_per_trade_pct: float = 2.0
     # Include an (affordable) option-chain slice per watchlist symbol in Claude's context so
     # it can trade options — needs the Webull OPRA option-data subscription. Off by default
     # (would 403 every cycle without OPRA).
@@ -104,6 +116,10 @@ class Settings(BaseSettings):
             "decision_interval_seconds": self.decision_interval_seconds,
             "market_hours_only": self.market_hours_only,
             "options_enabled": self.options_enabled,
+            "trading_style": self.trading_style,
+            "intraday_only": self.intraday_only,
+            "flatten_before_close_minutes": self.flatten_before_close_minutes,
+            "max_risk_per_trade_pct": self.max_risk_per_trade_pct,
             "claude_provider": self.claude_provider.value,
             "claude_model": self.claude_model,
             "anthropic_api_key": mark(self.anthropic_api_key),

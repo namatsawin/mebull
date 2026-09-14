@@ -119,6 +119,41 @@ class ExecutionCoordinator:
             decision_id=decision_id,
         )
 
+    async def flatten_all(self, *, reason: str = "eod-flatten") -> int:
+        """Deterministically close every open equity position (intraday-flat, spec §36 safety).
+        Routes each close through the Safety Guard like any order — never bypasses it. Option
+        positions are left to the model's own CLOSE (they need a contract-resolved limit); a
+        warning is logged so they're never silently held. Returns close orders submitted."""
+        positions = await self._portfolio.latest_persisted_positions()
+        submitted = 0
+        for pos in positions:
+            if not pos.quantity:
+                continue
+            if pos.instrument_type in (InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION):
+                log.warning("flatten.option_skipped", symbol=pos.symbol, quantity=pos.quantity)
+                continue
+            side = Side.SELL if pos.quantity > 0 else Side.BUY
+            request = OrderRequest(
+                client_order_id=make_client_order_id(f"{reason}:{pos.symbol}:{pos.quantity}"),
+                symbol=pos.symbol,
+                instrument_type=pos.instrument_type or InstrumentType.STOCK,
+                side=side,
+                quantity=abs(pos.quantity),
+                order_type=OrderType.MARKET,
+                time_in_force=_default_tif(),
+            )
+            result = await self._execution.execute_order(request, decision_id=None)
+            if result.placed:
+                submitted += 1
+                log.info(
+                    "flatten.closed", symbol=pos.symbol, side=side.value, qty=abs(pos.quantity)
+                )
+            else:
+                log.warning(
+                    "flatten.blocked", symbol=pos.symbol, reason=result.authorization.reason
+                )
+        return submitted
+
     async def _resolve_side_quantity(self, decision: Decision):
         if decision.decision_type is DecisionType.CLOSE:
             # Close = flatten the current position in the symbol.

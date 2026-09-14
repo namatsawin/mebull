@@ -58,6 +58,7 @@ class TradingApp:
             )
             executor = RealCoordinator(exec_service, self._portfolio, self._adapter)
 
+        self._executor = executor
         self._engine = DecisionEngine(
             portfolio=self._portfolio,
             context_builder=ContextBuilder(self._adapter, self._memory),
@@ -89,6 +90,17 @@ class TradingApp:
         except Exception as exc:  # noqa: BLE001 - learning must never break the loop
             log.warning("learning.failed", error=str(exc))
         return decision
+
+    async def flatten_positions(self, *, reason: str = "eod-flatten") -> int:
+        """Deterministically close all open positions (intraday-flat guarantee). No-op if the
+        executor doesn't support it. Routes through the Safety Guard."""
+        flatten = getattr(self._executor, "flatten_all", None)
+        if flatten is None:
+            return 0
+        count = await flatten(reason=reason)
+        if count:
+            log.info("app.flattened", count=count, reason=reason)
+        return count
 
     async def stop(self) -> None:
         log.info("app.stopped")

@@ -20,7 +20,7 @@ import uvicorn
 from apm import __version__
 from apm.config import get_settings
 from apm.db import ping
-from apm.marketdata import is_market_open
+from apm.marketdata import minutes_to_close
 from apm.observability import configure_logging, get_logger
 from apm.orchestrator.app import TradingApp
 from apm.orchestrator.health import create_health_app
@@ -55,18 +55,46 @@ def seconds_to_next_boundary(interval: float, now: float) -> float:
 
 
 async def _decision_loop(
-    app: TradingApp, stop: asyncio.Event, interval: float, *, market_hours_only: bool
+    app: TradingApp,
+    stop: asyncio.Event,
+    interval: float,
+    *,
+    market_hours_only: bool,
+    intraday_only: bool,
+    flatten_before_close_minutes: int,
 ) -> None:
     """Run one decision cycle on every wall-clock boundary until stopped.
 
     When ``market_hours_only`` is set, cycles are skipped while the US market is closed
     (weekends/holidays/after-hours) — the loop still wakes each boundary but does nothing,
     which costs no tokens.
+
+    When ``intraday_only`` is set, the loop force-flattens all open positions once the session
+    is within ``flatten_before_close_minutes`` of the close (deterministic intraday-flat
+    guarantee — no position is ever held overnight, spec §36).
     """
+    flattened_today = False
     while not stop.is_set():
-        if market_hours_only and not is_market_open(dt.datetime.now(dt.UTC)):
+        now = dt.datetime.now(dt.UTC)
+        mins_left = minutes_to_close(now)
+        in_flatten_window = (
+            intraday_only and mins_left is not None and mins_left <= flatten_before_close_minutes
+        )
+        if market_hours_only and mins_left is None:
             log.info("loop.market_closed")
+            flattened_today = False  # reset for the next session
+        elif in_flatten_window:
+            if not flattened_today:
+                try:
+                    count = await app.flatten_positions(reason="eod-flatten")
+                    log.info("loop.eod_flatten", closed=count, minutes_to_close=mins_left)
+                except Exception as exc:  # noqa: BLE001 - never kill the loop
+                    log.error("loop.eod_flatten_failed", error=str(exc))
+                flattened_today = True
+            else:
+                log.info("loop.eod_hold", minutes_to_close=mins_left)
         else:
+            flattened_today = False
             try:
                 decision = await app.run_once("PERIODIC")
                 log.info("loop.cycle", decision_type=decision.decision_type.value)
@@ -121,6 +149,8 @@ async def async_main() -> None:
             stop,
             settings.decision_interval_seconds,
             market_hours_only=settings.market_hours_only,
+            intraday_only=settings.intraday_only,
+            flatten_before_close_minutes=settings.flatten_before_close_minutes,
         )
     )
     log.info(
@@ -128,6 +158,8 @@ async def async_main() -> None:
         health_port=settings.health_port,
         interval_seconds=settings.decision_interval_seconds,
         market_hours_only=settings.market_hours_only,
+        trading_style=settings.trading_style,
+        intraday_only=settings.intraday_only,
     )
 
     await stop.wait()

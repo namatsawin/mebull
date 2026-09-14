@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 from sqlalchemy import select
 
 from apm.config import get_settings
@@ -10,6 +12,7 @@ from apm.db.models import Decision as DecisionRow
 from apm.decision.context import ContextQuote, DecisionContext, Technicals
 from apm.domain import Bar
 from apm.learning.evaluator import LearningService
+from apm.marketdata import minutes_to_close
 from apm.memory.service import MemoryService
 from apm.observability import get_logger
 from apm.portfolio.state import PortfolioState
@@ -78,6 +81,7 @@ class ContextBuilder:
             as_of=state.as_of.isoformat(),
             portfolio_state=state.snapshot_summary(),
             buying_power=state.buying_power,
+            mandate=_mandate(settings),
             watchlist=watchlist,
             quotes=quotes,
             technicals=technicals,
@@ -154,6 +158,33 @@ class ContextBuilder:
             }
             for r in rows
         ]
+
+
+def _mandate(settings) -> dict:
+    """The intraday mandate for this cycle: style, intraday-flat rule, minutes to close, and
+    per-trade risk guidance. Deterministic — from config + wall-clock (spec §45)."""
+    mins = minutes_to_close(dt.datetime.now(dt.UTC))
+    m = {
+        "style": settings.trading_style,
+        "intraday_only": settings.intraday_only,
+        "max_risk_per_trade_pct": settings.max_risk_per_trade_pct,
+        "minutes_to_close": mins,
+        "must_flatten_within_minutes": settings.flatten_before_close_minutes,
+    }
+    if settings.intraday_only and mins is not None:
+        # A clear, actionable instruction the model can act on near the bell.
+        if mins <= settings.flatten_before_close_minutes:
+            m["close_directive"] = (
+                "CLOSE all open positions now — the session is about to end and no position "
+                "may be held overnight."
+            )
+        elif mins <= settings.flatten_before_close_minutes * 3:
+            m["close_directive"] = (
+                "Session close is near — stop opening new risk and plan exits."
+            )
+        else:
+            m["close_directive"] = "Intraday only: any position you open must be closed today."
+    return m
 
 
 def _sma(values: list[float], n: int) -> float | None:

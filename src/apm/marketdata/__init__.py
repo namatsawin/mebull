@@ -4,6 +4,6 @@ Real-time quotes (Webull MQTT), historical bars, and point-in-time data for rese
 Stale market data must block new decisions (spec §37).
 """
 
-from apm.marketdata.hours import is_market_open
+from apm.marketdata.hours import is_market_open, minutes_to_close
 
-__all__ = ["is_market_open"]
+__all__ = ["is_market_open", "minutes_to_close"]

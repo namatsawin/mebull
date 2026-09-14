@@ -39,3 +39,13 @@ def is_market_open(now_utc: dt.datetime) -> bool:
     if et.date() in _HOLIDAYS:
         return False
     return _OPEN <= et.time() < _CLOSE
+
+
+def minutes_to_close(now_utc: dt.datetime) -> float | None:
+    """Minutes until the regular session close, or None if the market is closed. Used for
+    intraday time-awareness and the deterministic end-of-day flatten."""
+    if not is_market_open(now_utc):
+        return None
+    et = now_utc.astimezone(_ET)
+    close_dt = dt.datetime.combine(et.date(), _CLOSE, tzinfo=_ET)
+    return round((close_dt - et).total_seconds() / 60, 1)
