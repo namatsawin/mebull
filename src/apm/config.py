@@ -1,0 +1,117 @@
+"""Central configuration — env only (spec §62-63: secrets never in prompts/DB/logs).
+
+All settings load from environment variables prefixed with ``APM_`` (plus a few
+third-party names like ``ANTHROPIC_API_KEY`` / ``WEBULL_*``). Nothing here is ever
+logged directly; use ``settings.redacted()`` for safe display.
+"""
+
+from __future__ import annotations
+
+from enum import StrEnum
+from functools import lru_cache
+
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class ExecutionMode(StrEnum):
+    """How orders are handled. Real money only exists in REAL (spec §6, §67)."""
+
+    MOCK = "MOCK"        # no broker; simulated adapter — analysis/dev
+    SANDBOX = "SANDBOX"  # Webull sandbox — full order lifecycle, no real capital
+    REAL = "REAL"        # live account — gated behind the Safety Guard + kill switch
+
+
+class ClaudeProviderName(StrEnum):
+    MOCK = "mock"
+    ANTHROPIC = "anthropic"
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="APM_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # --- Portfolio identity (spec §5) ---------------------------------------
+    portfolio_id: str = "main-portfolio"
+    owner: str = "owner"
+
+    # --- Safety (spec §36) ---------------------------------------------------
+    # Env half of the kill switch. The DB-backed half is checked at authorize-time.
+    trading_enabled: bool = False
+    execution_mode: ExecutionMode = ExecutionMode.MOCK
+
+    # --- Database ------------------------------------------------------------
+    database_url: str = "postgresql+asyncpg://apm:apm@localhost:5432/apm"
+
+    # --- Claude --------------------------------------------------------------
+    claude_provider: ClaudeProviderName = ClaudeProviderName.MOCK
+    claude_model: str = "claude-opus-4-8"
+    anthropic_api_key: SecretStr | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+
+    # --- Webull (wired in at M1) --------------------------------------------
+    webull_app_key: SecretStr | None = Field(default=None, alias="WEBULL_APP_KEY")
+    webull_app_secret: SecretStr | None = Field(default=None, alias="WEBULL_APP_SECRET")
+    webull_account_id: str | None = Field(default=None, alias="WEBULL_ACCOUNT_ID")
+    webull_region: str = Field(default="us", alias="WEBULL_REGION")
+
+    # --- Observability -------------------------------------------------------
+    log_level: str = "INFO"
+    log_json: bool = True
+    health_port: int = 8080
+
+    # --- Watchlist (spec §4, §10) -------------------------------------------
+    watchlist: str = ""
+
+    @property
+    def watchlist_symbols(self) -> list[str]:
+        return [s.strip().upper() for s in self.watchlist.split(",") if s.strip()]
+
+    @property
+    def can_place_real_orders(self) -> bool:
+        """Env-level precondition for real orders. The Safety Guard enforces more."""
+        return self.trading_enabled and self.execution_mode is ExecutionMode.REAL
+
+    def redacted(self) -> dict[str, object]:
+        """Config safe to log — secrets replaced with a marker."""
+        def mark(v: SecretStr | None) -> str:
+            return "***set***" if v and v.get_secret_value() else "***unset***"
+
+        return {
+            "portfolio_id": self.portfolio_id,
+            "owner": self.owner,
+            "trading_enabled": self.trading_enabled,
+            "execution_mode": self.execution_mode.value,
+            "claude_provider": self.claude_provider.value,
+            "claude_model": self.claude_model,
+            "anthropic_api_key": mark(self.anthropic_api_key),
+            "webull_app_key": mark(self.webull_app_key),
+            "webull_app_secret": mark(self.webull_app_secret),
+            "webull_account_id": self.webull_account_id or "***unset***",
+            "webull_region": self.webull_region,
+            "database_url": _redact_url(self.database_url),
+            "watchlist": self.watchlist_symbols,
+            "log_level": self.log_level,
+            "health_port": self.health_port,
+        }
+
+
+def _redact_url(url: str) -> str:
+    """Hide credentials in a SQLAlchemy/DB URL for safe logging."""
+    if "@" not in url:
+        return url
+    scheme_sep = "://"
+    if scheme_sep not in url:
+        return "***"
+    scheme, rest = url.split(scheme_sep, 1)
+    _, host = rest.rsplit("@", 1)
+    return f"{scheme}{scheme_sep}***:***@{host}"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

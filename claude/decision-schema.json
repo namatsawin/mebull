@@ -1,0 +1,38 @@
+{
+  "$comment": "PLACEHOLDER. The authoritative decision contract is generated at milestone M4 from the pydantic model in src/apm/decision/ (Decision -> JSON Schema, enforced via Anthropic tool-use). This file documents the intended shape (spec §17, §40).",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Decision",
+  "type": "object",
+  "required": ["decision_type", "portfolio_id", "confidence", "reasoning_summary"],
+  "properties": {
+    "decision_type": {
+      "type": "string",
+      "enum": ["BUY", "SELL", "CLOSE", "HOLD", "WAIT", "REBALANCE", "RESEARCH", "EXPERIMENT"]
+    },
+    "portfolio_id": { "type": "string" },
+    "symbol": { "type": ["string", "null"] },
+    "instrument_type": { "type": ["string", "null"], "enum": ["STOCK", "OPTION", null] },
+    "action": { "type": ["string", "null"], "enum": ["BUY", "SELL", null] },
+    "quantity": { "type": ["number", "null"] },
+    "thesis": { "type": ["string", "null"] },
+    "entry_plan": { "type": ["object", "null"] },
+    "exit_plan": { "type": ["object", "null"] },
+    "invalidation_condition": { "type": ["string", "null"] },
+    "expected_holding_period": { "type": ["string", "null"] },
+    "expected_outcome": { "type": ["string", "null"] },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "reasoning_summary": { "type": "string" },
+    "opportunities_considered": { "type": "array", "items": { "type": "string" } },
+    "rejected_opportunities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "symbol": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "alternatives_considered": { "type": "array", "items": { "type": "string" } }
+  }
+}
