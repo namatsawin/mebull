@@ -12,6 +12,8 @@ from apm.research.backtest import (
     run_backtest,
     sma_crossover,
 )
+from apm.research.experiment import ExperimentService
+from apm.research.strategy import StrategyService
 
 __all__ = [
     "BacktestConfig",
@@ -19,4 +21,6 @@ __all__ = [
     "run_backtest",
     "always_long",
     "sma_crossover",
+    "StrategyService",
+    "ExperimentService",
 ]

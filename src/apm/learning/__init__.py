@@ -6,5 +6,6 @@ good decision from good outcome (spec §23); avoids overfitting (spec §74).
 """
 
 from apm.learning.evaluator import LearningService
+from apm.learning.review import ReviewService
 
-__all__ = ["LearningService"]
+__all__ = ["LearningService", "ReviewService"]

@@ -20,6 +20,7 @@ from apm.events.detector import Event, EventDetector
 from apm.execution.coordinator import ExecutionCoordinator
 from apm.execution.service import ExecutionService
 from apm.journal.service import JournalService
+from apm.learning.review import PERIOD_FOR_EVENT, ReviewService
 from apm.memory.service import MemoryService
 from apm.observability import get_logger
 from apm.portfolio.service import PortfolioService
@@ -44,6 +45,7 @@ class TradingApp:
         self._memory = MemoryService(self._settings.portfolio_id)
         self._journal = JournalService()
         self._reconcile = ReconciliationService(self._adapter, self._portfolio)
+        self._review = ReviewService(self._adapter)
         self._detector = EventDetector()
 
         # Execution stack: decisions that place orders route through the Safety Guard
@@ -113,6 +115,9 @@ class TradingApp:
             event = await self._queue.get()
             try:
                 await self._engine.run_cycle(event.type.value)
+                period = PERIOD_FOR_EVENT.get(event.type.value)
+                if period:
+                    await self._review.generate(period)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - one bad cycle must not kill the loop

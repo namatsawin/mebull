@@ -342,6 +342,103 @@ class SafetyEvent(Base):
     )
 
 
+class StrategyStatus(StrEnum):
+    HYPOTHESIS = "HYPOTHESIS"
+    RESEARCH = "RESEARCH"
+    BACKTEST = "BACKTEST"
+    EVALUATE = "EVALUATE"
+    REAL_EXPERIMENT = "REAL_EXPERIMENT"
+    PROMOTED = "PROMOTED"
+    RETIRED = "RETIRED"
+    FAILED = "FAILED"
+
+
+class StrategyVersion(Base):
+    """A versioned strategy hypothesis + its evidence (spec §27, §42). Never overwritten."""
+
+    __tablename__ = "strategy_version"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    portfolio_id: Mapped[str] = mapped_column(ForeignKey("portfolio.id"), index=True)
+    # strategy_id is the name, e.g. "volatility_breakout".
+    strategy_id: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default=StrategyStatus.HYPOTHESIS, index=True)
+    hypothesis: Mapped[str] = mapped_column(Text, default="")
+    implementation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    sample_size: Mapped[int] = mapped_column(Integer, default=0)
+    performance: Mapped[dict] = mapped_column(JSON, default=dict)
+    known_failure_modes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.UTC))
+    retired_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
+
+
+class Experiment(Base):
+    """A strategy experiment (spec §26, §51). Research/backtest first, then optional real."""
+
+    __tablename__ = "experiment"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    portfolio_id: Mapped[str] = mapped_column(ForeignKey("portfolio.id"), index=True)
+    strategy_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    hypothesis: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(20), default="RUNNING", index=True)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.UTC))
+    evaluated_at: Mapped[dt.datetime | None] = mapped_column(nullable=True)
+
+    observations: Mapped[list[ExperimentObservation]] = relationship(back_populates="experiment")
+
+
+class ExperimentObservation(Base):
+    __tablename__ = "experiment_observation"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    experiment_id: Mapped[str] = mapped_column(ForeignKey("experiment.id"), index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.UTC))
+
+    experiment: Mapped[Experiment] = relationship(back_populates="observations")
+
+
+class Review(Base):
+    """Daily/weekly/monthly review (spec §76-78). period distinguishes the cadence."""
+
+    __tablename__ = "review"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    portfolio_id: Mapped[str] = mapped_column(ForeignKey("portfolio.id"), index=True)
+    period: Mapped[str] = mapped_column(String(12), index=True)  # DAILY | WEEKLY | MONTHLY
+    as_of: Mapped[dt.datetime] = mapped_column(index=True)
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.UTC))
+
+
+class MarketRegime(Base):
+    """Observed market regime over time (spec §54)."""
+
+    __tablename__ = "market_regime"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    as_of: Mapped[dt.datetime] = mapped_column(index=True)
+    regime: Mapped[str] = mapped_column(String(32))
+    volatility_regime: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.UTC))
+
+
+class MarketObservation(Base):
+    __tablename__ = "market_observation"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    as_of: Mapped[dt.datetime] = mapped_column(index=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[dt.datetime] = mapped_column(default=lambda: dt.datetime.now(dt.UTC))
+
+
 class SystemFlag(Base, TimestampMixin):
     """Key/value runtime flags. Hosts the DB-backed half of the kill switch (spec §36)."""
 
