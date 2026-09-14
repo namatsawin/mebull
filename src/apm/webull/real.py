@@ -467,6 +467,14 @@ class RealWebullAdapter:
         data = _json(await self._dispatch(_contracts))
         rows = data if isinstance(data, list) else _first(data, "data", "contracts", default=[])
         rows = rows or []
+        # STANDARD contracts only — drop adjusted/FLEX series (root like "2GOOG"/"4QQQ") whose
+        # symbols the option snapshot rejects (417 INVALID_SYMBOL) and which we don't trade.
+        rows = [
+            r
+            for r in rows
+            if str(_first(r, "root_symbol", default=underlying)).upper() == underlying
+            and str(_first(r, "def_type", default="STANDARD")).upper() == "STANDARD"
+        ]
 
         # Narrow to the nearest expiry and strikes around the money before the snapshot call.
         px = None
