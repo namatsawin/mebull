@@ -60,8 +60,17 @@ When `APM_OPTIONS_ENABLED=true` and quant mode:
 - Intraday snapshot (Webull) still drives support/resistance/ATR/trend (day range); Yahoo adds
   the longer-horizon stats the snapshot can't (HV, volume baseline, VIX).
 
-## Still missing / next
+## Scope: Model B only (Model A is PARKED)
+The build focuses on **Model B (intraday 0DTE long calls)** — the only model that fits a small
+cash account. **Model A (short credit spreads) is intentionally NOT built / parked**: it needs
+multi-leg orders + margin + far more capital (a $5 spread's max loss ≫ the 2-3% NAV sizing on a
+~$700 account). The rules engine only ever buys single-leg long options; there is no code path
+that opens a spread. Revisit Model A when capital + multi-leg support exist.
+
+## Still missing / next (Model B)
 - **Backtest** — the rules are NOT yet validated to have edge. Highest-priority next step.
-- **iv_rank_30d** — needs accumulated IV history (self-collect) or a vendor.
-- **Model A (credit spreads)** — needs multi-leg orders + more capital (spread max-loss ≫ 1% NAV).
+- **VRP context (IV − HV20)** — computable now (OPRA IV + Yahoo HV); a better "is premium rich?"
+  read than iv_rank for the small account.
+- **iv_rank_30d** — needs accumulated IV history (self-collect ~30d) or a vendor.
+- **Trailing stop + "flat N candles → exit"** — Model B exit refinements (currently fixed TP/SL).
 - **Settled-cash / GFV** tracking (cash account, T+1) — not modeled yet.
