@@ -70,8 +70,11 @@ async def _latest_ts(symbol: str, interval: str) -> dt.datetime | None:
 async def _seed_one(symbol: str, interval: str) -> int:
     period, max_age = _PLAN[interval]
     latest = await _latest_ts(symbol, interval)
-    if latest is not None and (dt.datetime.now(dt.UTC).replace(tzinfo=None) - latest) < max_age:
-        return 0  # fresh enough
+    if latest is not None:
+        now = dt.datetime.now(dt.UTC).replace(tzinfo=None)
+        latest_naive = latest.replace(tzinfo=None) if latest.tzinfo else latest
+        if (now - latest_naive) < max_age:
+            return 0  # fresh enough
     try:
         bars = await asyncio.to_thread(_fetch_yahoo, symbol, interval, period)
     except Exception as exc:  # noqa: BLE001 - free source may be down/rate-limited
