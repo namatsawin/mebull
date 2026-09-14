@@ -23,18 +23,29 @@ forward-test, not proof.
    (5m bars ahead; default 12 = 60 min). Larger barrier = a bigger move must happen (harder,
    but more meaningful for options which pay spread+theta).
 
-3. **Interpret honestly** (this is the important part — do NOT hype):
-   - The table shows each signal's `P(up first)` = probability price hits +barrier% before
-     −barrier% within the horizon, its `edge` vs baseline, and `train`/`test` (first vs last
-     half of the window).
-   - **Real lead** (worth forward-testing): `edge` clearly positive (≈ +3–5% or more) AND
-     decent `n` (≥ ~30) AND `train ≈ test` (persists out-of-sample). The script marks these
-     `<-- lead`.
-   - **No edge**: edge ≈ 0 or negative, or `P(up)` below baseline, or huge train/test gap
-     (overfit/noise), or tiny `n`.
-   - Always state the caveats: small sample (~60 trading days of 5m), we test several signals
-     (multiple-comparison risk), and this is the *underlying* — a long option needs the move to
-     beat spread (~5%) + theta, so a marginal underlying edge ≈ negative after option costs.
+3. **Interpret the summary table honestly** (this is the important part — do NOT hype).
+   The script prints ONE consolidated table (each row = stock × strategy), sorted best-first:
+
+   | Column | Meaning |
+   |---|---|
+   | Stock / Strategy | the ticker and the signal |
+   | Trades | number of simulated trades (signal fires → enter → exit at barrier/horizon) |
+   | Win% | % of those trades that closed positive |
+   | AvgPnL% | average gross % per trade (no fees) |
+   | TotPnL% | sum of per-trade % (rough cumulative, 1 unit each) |
+   | vsBase% | AvgPnL minus the "buy any bar" baseline — **the actual edge** |
+   | OOS% | avg PnL in the 2nd half of the window (out-of-sample check) |
+   | Lead | 🟢 real lead / 🟡 weak / 🔴 no edge |
+
+   - **🟢 lead** = `vsBase>0` AND `Trades≥30` AND `OOS>baseline` (persists out-of-sample) →
+     the only rows worth a forward test.
+   - **🔴/🟡** = edge ≤ 0, or too few trades, or fails out-of-sample → treat as no edge.
+   - Report the winners as a short bullet list (stock + strategy + win% + edge), then the caveats.
+   - Caveats to always state: small sample (~60 trading days of 5m), several signals tested
+     (multiple-comparison risk — a lone 🟢 could be luck; multiple stocks sharing the same
+     winning signal is stronger), and this is the *underlying* gross PnL — a long option must
+     beat spread (~5%) + theta, so a small underlying edge ≈ negative after option costs (better
+     expressed in shares).
 
 4. **Recommend next step:**
    - If a lead survives: propose a **forward test** (paper, out-of-sample by time) before any
