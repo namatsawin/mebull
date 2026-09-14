@@ -16,6 +16,10 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 class Base(DeclarativeBase):
     """Root of all ORM models. Import models before running Alembic autogenerate."""
 
+    # All datetimes are timezone-aware (timestamptz) — the whole system works in UTC
+    # and mixing naive/aware values with asyncpg raises. This makes it uniform.
+    type_annotation_map = {dt.datetime: DateTime(timezone=True)}
+
 
 class TimestampMixin:
     created_at: Mapped[dt.datetime] = mapped_column(
