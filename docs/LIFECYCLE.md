@@ -159,9 +159,12 @@ There is just **one** knob: how often to run a decision cycle.
 APM_DECISION_INTERVAL_SECONDS   (default 300 = every 5 minutes)
 ```
 
-The loop runs a cycle immediately on startup, then waits that many seconds and runs again,
-forever, until shutdown. Every cycle is a full, free decision (§3) plus a counterfactual
-update. Lower the number to react faster (costs more tokens); raise it to save money.
+The loop runs a cycle immediately on startup, then fires on **wall-clock boundaries**
+aligned to `interval` — with 300s that's :00 / :05 / :10 … (UTC), e.g. 20:35, 20:40, 20:45
+— so cycles land on the clock instead of drifting by each cycle's runtime. If a cycle
+overruns a boundary, the missed boundaries are coalesced (it targets the next one, never
+runs back-to-back). Every cycle is a full, free decision (§3) plus a counterfactual update.
+Lower the number to react faster (costs more tokens); raise it to save money.
 
 > Note: this is a simple fixed interval — it does not know about market open/close hours or
 > holidays. If you only want it active during market hours, gate it outside the app (e.g.

@@ -1,6 +1,7 @@
 # CLAUDE.md — context for AI coding sessions
 
-Read this first. It orients you fast and encodes the non-negotiable rules.
+Read this first. It orients you fast and encodes the non-negotiable rules. Picking the
+project up? Also read `docs/STATUS.md` (what's done vs stubbed + next steps).
 
 ## What this is
 An **Autonomous AI Portfolio Manager**: one persistent Claude identity managing one

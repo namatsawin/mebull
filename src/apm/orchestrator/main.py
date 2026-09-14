@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import signal
+import time
 
 import uvicorn
 
@@ -38,17 +39,33 @@ async def _wait_for_db(retries: int = 30, delay: float = 2.0) -> None:
     raise RuntimeError("database did not become ready in time")
 
 
+def seconds_to_next_boundary(interval: float, now: float) -> float:
+    """Seconds from `now` (epoch seconds) to the next wall-clock boundary aligned to
+    `interval`. With interval=300 the boundaries land on :00/:05/:10 ... (UTC), so cycles
+    fire on the clock (e.g. 20:35, 20:40) instead of drifting by each cycle's runtime.
+
+    If `now` is exactly on a boundary, returns a full interval (wait for the next one).
+    If a cycle overran one or more boundaries, this returns the time to the *next* one —
+    missed boundaries are coalesced, never run back-to-back.
+    """
+    rem = now % interval
+    return interval - rem if rem > 0 else interval
+
+
 async def _decision_loop(app: TradingApp, stop: asyncio.Event, interval: float) -> None:
-    """Run one decision cycle immediately, then every `interval` seconds until stopped."""
+    """Run one decision cycle immediately, then on every wall-clock boundary until stopped."""
     while not stop.is_set():
         try:
             decision = await app.run_once("PERIODIC")
             log.info("loop.cycle", decision_type=decision.decision_type.value)
         except Exception as exc:  # noqa: BLE001 - a bad cycle must not kill the loop
             log.error("loop.cycle_failed", error=str(exc))
-        # Sleep for `interval`, but wake immediately on shutdown.
+        if stop.is_set():
+            break
+        # Sleep until the next clock-aligned boundary, but wake immediately on shutdown.
+        sleep = seconds_to_next_boundary(interval, time.time())
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=interval)
+            await asyncio.wait_for(stop.wait(), timeout=sleep)
 
 
 async def _serve_health(stop: asyncio.Event) -> None:

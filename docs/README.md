@@ -2,6 +2,10 @@
 
 Start here to understand the system.
 
+## Continuing the work
+- **[STATUS.md](STATUS.md)** — project status, what's done vs stubbed vs unverified, and the
+  prioritized next steps. **Read this if you're picking the project up.**
+
 ## Understand it (simple English + diagrams)
 - **[HOW_IT_WORKS.md](HOW_IT_WORKS.md)** — what it is, the parts, the modes, the safety
   layer, and worked examples. **Read this first.**
